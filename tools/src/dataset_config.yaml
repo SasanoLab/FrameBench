@@ -1,0 +1,18 @@
+# データセット設定ファイル
+# このファイルを編集してデータセットのパスを管理できます
+
+datasets:
+  # 手動で指定するデータセット（追加のパス）
+  manual_datasets:
+    - name: "step2_qa"
+      path: "data/ja/gpt-4.1-mini/step2/formatted_qa.jsonl"
+      description: "step2の評価用"
+      enabled: true
+    - name: "step3_eval_round1"
+      path: "data/ja/gpt-4.1-mini/step3/qa.jsonl"
+      description: "step3の1回目の評価用"
+      enabled: true
+    - name: "step3_eval_round2"
+      path: "data/ja/gpt-4.1-mini/step3/eval_round2/qa.jsonl"
+      description: "step3の2回目の評価用"
+      enabled: true

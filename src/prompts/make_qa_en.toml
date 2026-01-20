@@ -1,0 +1,97 @@
+version = "v0.19.0"
+engine = "jinja2" # template engine for variable interpolation
+language = "en"
+
+[engine_options]
+undefined = "debug"
+
+# Below are the actual instructions sent to the LLM
+# Structured to align with common OpenAI chat formats
+[[messages]]
+role = "system"
+content = '''
+You analyze text and output results strictly in JSON format.
+Follow these rules rigorously:
+- The output MUST be a JSON object.
+- All JSON keys and string values MUST be wrapped in double quotes "."
+'''
+
+[[messages]]
+role = "user"
+content = '''
+Please fully comply with the following [Input Data] and [Creation Instructions], and generate {{ n }} sets of English sentence pairs and quizzes.
+
+[Input Data]
+
+Verb to use: {{ verb }}
+
+Frame A information: {{ definitions_a }}
+
+Frame B information: {{ definitions_b }}
+
+[Creation Instructions]
+
+Step 0: Discover the Most Interesting "Essential Difference"
+    First, compare and analyze Frame A and Frame B given in the [Input Data].
+    Identify exactly one point that is implicit (not written explicitly in the sentences) yet essential, which produces the core difference between the frames. 
+    Use this as the basis for all subsequent steps.
+
+Step 1: Create Example Sentences
+    Using the "Verb to use," create Sentence 1 for Frame A and Sentence 2 for Frame B.
+    Ensure each sentence reliably evokes its intended frame. 
+    Reference sentences that evoke the frame can be helpful.
+    Since the subsequent step will ask about the essential difference identified in Step 0, craft sentences that implicitly reflect that difference.
+
+    Rule (a): Do NOT include hints to the answer in the sentences.
+        Avoid overt words that would directly reveal the later question's "answer."
+    Rule (b): Make the two sentences as similar as reasonably possible in content words (excluding the verb), so that comparison is meaningful.
+        However, do not make them so similar that they fail to evoke different frames.
+    Rule (c) (most important): The sentences must be natural English. Ensure other rules do not produce awkward English.
+
+Step 2: Create the Question
+    Create a simple quiz question, in specific and plain wording, that asks about the "essential difference" you found in Step 0.
+    Make it feel like a natural, interesting quiz that does not reveal that it is about frames. If it becomes too simple, both sentences may fit; avoid that.
+        e.g., Which sentence shows she is alone? Which sentence shows the value is increasing? Which sentence shows he is operating something?
+
+    Prohibitions: Do NOT use the following in the question.
+        - Technical terms (e.g., frame names, core element names)
+        - Vague words (e.g., nuance, intention, feeling)
+        - Simple paraphrases of the exact words used in the example sentences
+    Ensure the answer deterministically picks exactly one of the two sentences. If not, adjust sentences or the question while respecting Steps 1 and 2.
+
+[Checks]
+Consider the following before finalizing:
+- Are the sentences natural English with clear meanings?
+- Does the question ask about a truly implicit difference that captures the frame distinction?
+- Can the answer be found without merely spotting a specific word in either sentence?
+
+Good example)
+- A question capturing a core element difference between frames:
+    Question: In which sentence does he have a competitor?
+    Sentence 1: He lost the gold medal at a restaurant.
+    Sentence 2: He lost the gold medal by 0.2 points.
+
+Output must be in the following JSON format, and output nothing else.
+
+```json
+{
+  "results": [
+    {
+      "thinking_process": "Analysis of frame differences and strategy",
+      "sentence_pair": {
+        "{{ frame_a }}": "Sentence corresponding to Frame A",
+        "{{ frame_b }}": "Sentence corresponding to Frame B"
+      },
+      "qa": {
+        "question": "Generated question",
+        "choices": ["Sentence 1", "Sentence 2", "Both sentences", "Neither sentence"],
+        "answer": "Correct choice"
+      }
+    },
+    …
+  ]
+}
+```
+
+IMPORTANT: You MUST output exactly the JSON above, with no extra text.
+'''

@@ -1,0 +1,39 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzw
+*.pyzwz
+*.pyzwzw
+*.pyzwzwz
+*.pyzwzwzw
+data/ja/gpt-5_v2
+data/**/*.py
+data/**/*.ipynb
+# 認証設定ファイル（セキュリティのため除外）
+src/auth_config.json
+auth_config.json
+auth_index.json
+*.auth.json
+.venv/
+*.lock
+
+# ユーザー割り当て設定ファイル（セキュリティのため除外）
+src/user_assignment.json
+user_assignment.json
+
+# アノテーションファイル（ダウンロード機能で取得可能）
+annotations.json
+evaluations.json
+text_corrections.json
+
+# 不要なファイル
+README_backup.md
+README_HF.md
+hello.py
+TODO.md
+pyproject.toml
+uv.lock
