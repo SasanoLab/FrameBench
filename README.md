@@ -47,9 +47,9 @@ uv sync --extra generation
 ### 3. **環境変数の設定**
 OpenAI APIを使用する場合は、`.env`ファイルを作成：
 ```bash
-cp .env.example .env
-# .envファイルを編集してAPIキーを設定
+cat << EOF > .env
 OPENAI_API_KEY=your_api_key_here
+EOF
 ```
 
 ## 🛠️ ベンチマークの構築
@@ -185,7 +185,6 @@ framebench/
 │       ├── gen_other_choice_ja.toml  # 選択肢生成プロンプト
 │       ├── make_qa_ja.toml       # QA生成プロンプト（日本語）
 ├── scripts/                      # 実行スクリプト
-│   ├── setup.sh                 # 環境セットアップ
 │   ├── step1.sh                 # Step 1実行
 │   ├── step2.sh                 # Step 2実行
 │   ├── step3.sh                 # Step 3実行
@@ -212,7 +211,7 @@ framebench/
 │                   │   ├── summary.txt # 統計サマリー
 │                   │   └── params.json # 使用されたパラメータ
 │                   ├── aggregated_summary.txt  # 集計結果
-│                   └── aggregated_summary.tsv  # 集計結果（TSV形式）
+│                   └── aggregated_summary.tsv  
 ├── tools/                        # アノテーションツール（別README参照）
 │   ├── app.py                   # メインアプリケーション
 │   ├── src/                     # ツールソースコード
