@@ -315,7 +315,7 @@ def run_single_prompt_experiment(args, prompt_file, prompt_name, all_problems_or
     
     safe_model_name = args.model.replace('/', '_').replace(':', '_')
     num_str = str(args.num) if args.num is not None else "all"
-    output_dir = Path(args.output_dir) / args.language / "four_choice_tsv" / num_str / f"{safe_model_name}{suffix}" / prompt_name
+    output_dir = Path(args.output_dir) / args.language / num_str / f"{safe_model_name}{suffix}" / prompt_name
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # バックエンドに応じて推論を実行
