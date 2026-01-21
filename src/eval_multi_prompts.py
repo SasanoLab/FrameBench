@@ -5,13 +5,13 @@
 複数のプロンプトで四択問題を評価し、結果を集計するスクリプト
 使用例:
   # eval_promptフォルダ内の全プロンプトで実験
-  uv run python src/eval_multi_prompts.py --model gpt-4o --dataset data/ja/gpt-4.1-mini/step3/qa_annotated.jsonl
+  uv run python src/eval_multi_prompts.py --model gpt-4o --dataset data/ja/gpt5/qa.jsonl
   
   # HuggingFace Datasetから読み込む場合
-  uv run python src/eval_multi_prompts.py --model gpt-4o --dataset cl-nagoya/jFrameBench --dataset_split train
+  uv run python src/eval_multi_prompts.py --model gpt-4o --dataset cl-nagoya/jFrameBench
   
   # 特定のプロンプトファイルと問題数を指定
-  uv run python src/eval_multi_prompts.py --model gpt-4o --num 100 --prompt_files eval_prompt/prompt_v1.txt eval_prompt/prompt_v2.txt --dataset data/ja/gpt-4.1-mini/step3/qa_annotated.jsonl
+  uv run python src/eval_multi_prompts.py --model gpt-4o --num 100 --prompt_files eval_prompt/prompt_v1.txt eval_prompt/prompt_v2.txt --dataset cl-nagoya/jFrameBench
 """
 
 import argparse
@@ -203,18 +203,10 @@ def run_openai_single_prompt(args, all_problems, all_messages, output_dir):
     
     caps = get_openai_model_capabilities(args.model)
     supports_reasoning = caps["reasoning_effort"] is not None
-    supports_structured_outputs = caps.get("structured_outputs", False)
-    
     api_params = {"model": args.model}
     
-    use_structured_outputs = False
-    if args.use_structured_outputs:
-        if supports_structured_outputs:
-            use_structured_outputs = True
-            api_params["response_format"] = CHOICE_SCHEMA
-        else:
-            print("警告: このモデルはStructured Outputsをサポートしていません。無視されます。")
-    
+    api_params["response_format"] = CHOICE_SCHEMA
+
     if supports_reasoning:
         if args.reasoning_effort:
             if args.reasoning_effort not in caps["reasoning_effort"]:
@@ -229,7 +221,6 @@ def run_openai_single_prompt(args, all_problems, all_messages, output_dir):
     
     actual_params = {
         "requested": {k: v for k, v in api_params.items() if k != "response_format"},
-        "use_structured_outputs": use_structured_outputs,
         "model_capabilities": caps,
         "first_response_model": None,
     }
@@ -321,8 +312,6 @@ def run_single_prompt_experiment(args, prompt_file, prompt_name, all_problems_or
             suffix = f"_reasoning_{args.reasoning_effort}"
         elif supports_reasoning:
             suffix = "_reasoning_medium"
-        if args.use_structured_outputs:
-            suffix += "_structured"
     
     safe_model_name = args.model.replace('/', '_').replace(':', '_')
     num_str = str(args.num) if args.num is not None else "all"
@@ -424,11 +413,6 @@ def main():
     vllm_group.add_argument('--answer_max_tokens', type=int, default=10,
                            help='思考モードでの回答部分の最大出力トークン数（デフォルト: 10）')
     
-    # OpenAI固有の引数
-    openai_group = parser.add_argument_group('OpenAI固有のオプション')
-    openai_group.add_argument('--use_structured_outputs', action='store_true',
-                             help='Structured Outputsを使用（OpenAIのみ）')
-    
     args = parser.parse_args()
     
     print(f"引数: {args}\n")
@@ -492,8 +476,6 @@ def main():
             suffix = f"_reasoning_{args.reasoning_effort}"
         elif supports_reasoning:
             suffix = "_reasoning_medium"
-        if args.use_structured_outputs:
-            suffix += "_structured"
     
     safe_model_name = args.model.replace('/', '_').replace(':', '_')
     num_str = str(args.num) if args.num is not None else "all"

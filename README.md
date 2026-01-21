@@ -6,7 +6,7 @@
 </p>
 <p align="center">
   <a href="#"><b>📄 論文</b></a> | 
-  <a href="#"><b>🤗 日本語FrameBench</b></a> 
+  <a href="https://huggingface.co/datasets/cl-nagoya/jFrameBench"><b>🤗 日本語FrameBench</b></a> 
 </p>
 *ベンチマークの構築に利用するフレーム知識は配布していません。
 
@@ -58,6 +58,7 @@ OPENAI_API_KEY=your_api_key_here
 ### Step 1: フレーム知識の前処理
 
 XMLファイルをパースしてJSONL形式に変換します。
+`data/<language>-framenet/raw_frame`配下に、喚起語がファイル名となっているXMLファイル群を配置してください。
 
 ```bash
 bash scripts/step1.sh
@@ -125,31 +126,23 @@ uv run python postprocess/merge_eval_rounds.py --base_dir data/ja/gpt-4.1-mini/s
 
 FrameBenchを用いてLLMを評価します。
 評価結果はプロンプトによって変化するため、5つのプロンプトで評価し、平均した結果を利用することを推奨します。
-<!-- TODO: HF Datasetからの評価 -->
 
-#### 単一プロンプトでの評価
-
+### 評価方法
+スクリプトの実行
+```bash
+bash script/run_eval.sh gpt-5-nano
+```
+もしくは
 ```bash
 uv run python src/eval_multi_prompts.py \
     --model gpt-4o \
-    --input_file data/ja/gpt-4.1-mini/step3/qa_annotated.jsonl \
+    --dataset cl-nagoya/jFrameBench \
     --num 100 \
     --prompt_files eval_prompt/prompt_v1.txt
 ```
-
-#### 複数プロンプトでの評価
-
-```bash
-uv run python src/eval_multi_prompts.py \
-    --model gpt-4o \
-    --input_file data/ja/gpt-4.1-mini/step3/qa_annotated.jsonl \
-    --num 100 \
-    --prompt_files eval_prompt/prompt_v1.txt eval_prompt/prompt_v2.txt eval_prompt/prompt_v3.txt
-```
-
 **主要オプション:**
-- `--model`: 評価に使用するLLMモデル
-- `--input_file`: 評価対象のJSONLファイル（必須）
+- `--model`: 評価に使用するLLM
+- `--dataset`: 評価対象のデータセット（自分で構築したものを利用する場合はjsonlファイルへのパスを指定）
 - `--num`: 評価する問題数（指定しない場合は全問）
 - `--prompt_files`: 使用するプロンプトファイル（複数指定可、指定しない場合は`eval_prompt/`内の全ファイルを使用）
 - `--output_dir`: 出力ディレクトリのベースパス（デフォルト: `output`）
@@ -157,7 +150,6 @@ uv run python src/eval_multi_prompts.py \
 
 **OpenAIモデル固有オプション:**
 - `--reasoning_effort`: 推論の深さ（`low`, `medium`, `high`, `minimal`, `none`）
-- `--use_structured_outputs`: Structured Outputsを使用
 
 **vLLMモデル固有オプション:**
 - `--enable_thinking`: 思考モードを有効にする
@@ -174,16 +166,6 @@ uv run python src/eval_multi_prompts.py \
 - `output/<language>/four_choice_tsv/<num>/<model>_<suffix>/aggregated_summary.txt` - 全プロンプトの集計結果
 - `output/<language>/four_choice_tsv/<num>/<model>_<suffix>/aggregated_summary.tsv` - 集計結果（TSV形式）
 
-#### バッチ評価スクリプト
-
-複数プロンプト×複数モデルの実験を一括実行する場合：
-
-```bash
-bash scripts/run_multi_prompt_experiment.sh
-```
-
-スクリプト内でモデルとプロンプトを指定して実行します。
-
 ## 📁 ファイル構成
 
 ```
@@ -199,39 +181,59 @@ framebench/
 │   │   ├── llm.py                # LLMラッパー
 │   │   └── utils.py              # 共通ユーティリティ
 │   └── prompts/                  # プロンプトテンプレート
+│       ├── __init__.py
+│       ├── gen_other_choice_ja.toml  # 選択肢生成プロンプト
+│       ├── make_qa_ja.toml       # QA生成プロンプト（日本語）
 ├── scripts/                      # 実行スクリプト
+│   ├── setup.sh                 # 環境セットアップ
 │   ├── step1.sh                 # Step 1実行
 │   ├── step2.sh                 # Step 2実行
 │   ├── step3.sh                 # Step 3実行
-│   └── run_multi_prompt_experiment.sh  # バッチ評価
 ├── eval_prompt/                  # 評価用プロンプト
 │   ├── prompt_v1.txt
 │   ├── prompt_v2.txt
-│   └── ...
+│   ├── prompt_v3.txt
+│   ├── prompt_v4.txt
+│   └── prompt_v5.txt
 ├── data/                         # データディレクトリ
 │   ├── <language>-framenet/     # フレームデータ
 │   │   ├── raw_frame/           # 生FrameNet XMLファイル
-│   │   ├── frames.jsonl         # パース済みフレームデータ
-│   │   ├── lexical_units.jsonl  # パース済み語彙単位データ
-│   │   └── exemplars.jsonl      # 例文データ
-│   └── <language>/              # 生成データ
-│       └── <model>/
-│           ├── step2/           # Step 2の出力
-│           ├── step2+annotation/  # Step 2アノテーション結果
-│           └── step3/           # Step 3の出力
+│   └── ja/              # 生成データ
+│       └── gpt5/
+│           ├── interim/         # jFrameBench中間ファイル
+│           └── qa.jsonl         # jFrameBenchデータ
 ├── output/                       # 評価結果出力
 │   └── <language>/
-│       └── four_choice_tsv/
-│           └── <num>/
+│       └── 
+│           └── <num>/           # 評価問題数（100, allなど）
 │               └── <model>_<suffix>/
 │                   ├── <prompt_name>/  # 各プロンプトの結果
-│                   └── aggregated_summary.txt  # 集計結果
+│                   │   ├── result.tsv  # 詳細な評価結果
+│                   │   ├── summary.txt # 統計サマリー
+│                   │   └── params.json # 使用されたパラメータ
+│                   ├── aggregated_summary.txt  # 集計結果
+│                   └── aggregated_summary.tsv  # 集計結果（TSV形式）
 ├── tools/                        # アノテーションツール（別README参照）
+│   ├── app.py                   # メインアプリケーション
+│   ├── src/                     # ツールソースコード
+│   │   ├── common.py
+│   │   ├── dataset_manager.py
+│   │   ├── evaluation_app.py
+│   │   ├── text_correction_app.py
+│   │   ├── dataset_config.yaml
+│   │   ├── evaluation_criteria.yaml
+│   │   ├── auth_config.json
+│   │   └── user_assignment.json
+│   ├── postprocess/             # アノテーション後処理
+│   │   ├── for_step2.py
+│   │   ├── for_2nd_annotation.py
+│   │   ├── for_human_eval.py
+│   │   └── merge_eval_rounds.py
+│   ├── README.md
+│   ├── pyproject.toml
+│   └── uv.lock
+├── config.yaml                  # モデル設定ファイル
 ├── pyproject.toml               # プロジェクト設定
 ├── uv.lock                      # 依存関係ロック
 └── README.md                    # このファイル
 ```
-
-## 📄 ライセンス
-
-このプロジェクトは研究目的で開発されました。
