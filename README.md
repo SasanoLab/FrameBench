@@ -199,7 +199,6 @@ framebench/
 │   │   ├── raw_frame/           # 生FrameNet XMLファイル
 │   └── ja/              # 生成データ
 │       └── gpt5/
-│           ├── interim/         # jFrameBench中間ファイル
 │           └── qa.jsonl         # jFrameBenchデータ
 ├── output/                       # 評価結果出力
 │   └── <language>/
