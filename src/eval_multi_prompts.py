@@ -479,7 +479,7 @@ def main():
     
     safe_model_name = args.model.replace('/', '_').replace(':', '_')
     num_str = str(args.num) if args.num is not None else "all"
-    base_output_dir = Path(args.output_dir) / args.language / "four_choice_tsv" / num_str / f"{safe_model_name}{suffix}"
+    base_output_dir = Path(args.output_dir) / args.language / num_str / f"{safe_model_name}{suffix}"
     
     aggregate_results(all_stats, prompt_names, base_output_dir)
 
