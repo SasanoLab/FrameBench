@@ -570,6 +570,6 @@ def create_output_dir(base_output_dir, language, num, model_name, suffix=""):
     safe_model_name = model_name.replace('/', '_').replace(':', '_')
     
     num_str = str(num) if num is not None else "all"
-    output_dir = Path(base_output_dir) / language / "four_choice_tsv" / num_str / f"{safe_model_name}{suffix}"
+    output_dir = Path(base_output_dir) / language / num_str / f"{safe_model_name}{suffix}"
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir

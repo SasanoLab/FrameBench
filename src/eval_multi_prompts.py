@@ -19,7 +19,7 @@ import json
 import sys
 from pathlib import Path
 import pandas as pd
-from eval_common_four_choice import (
+from eval_utils import (
     load_problems,
     create_messages,
     process_results,
