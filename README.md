@@ -5,7 +5,7 @@
 
 </p>
 <p align="center">
-  <a href="#"><b>📄 論文</b></a> | 
+  <a href="https://www.anlp.jp/proceedings/annual_meeting/2026/pdf_dir/Q4-13.pdf"><b>📄 論文</b></a> | 
   <a href="https://huggingface.co/datasets/cl-nagoya/jFrameBench"><b>🤗 日本語FrameBench</b></a> 
 </p>
 *ベンチマークの構築に利用するフレーム知識は配布していません。
