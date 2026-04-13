@@ -6,15 +6,10 @@
 vllm_defaults:
   # thinkタグの終了文字列（生成のstopとレスポンス解析の両方に使われる）
   thinking_stop: "</think>"
-  # thinking フェーズのサンプリング設定
+  # thinkingモード（thinking + 回答フェーズ共通）のサンプリング設定
   thinking_sampling:
     temperature: 0.6
     top_p: 0.95
-    top_k: 20
-  # thinking後の回答フェーズのサンプリング設定
-  answer_sampling:
-    temperature: 0.7
-    top_p: 0.8
     top_k: 20
   # 通常モード（thinking無効）のサンプリング設定
   sampling:
@@ -42,46 +37,17 @@ models:
     reasoning_effort: [minimal, low, medium, high]
     structured_outputs: true
 
-  o4-mini:
-    backend: openai
-    reasoning_effort: [low, medium, high]
-    structured_outputs: true
-
-  gpt-4o:
-    backend: openai
-    reasoning_effort: null
-    structured_outputs: true
-
-  gpt-4o-mini:
-    backend: openai
-    reasoning_effort: null
-    structured_outputs: true
-
-  gpt-4-turbo:
-    backend: openai
-    reasoning_effort: null
-    structured_outputs: false
-
-  gpt-4:
-    backend: openai
-    reasoning_effort: null
-    structured_outputs: false
-
-  gpt-3.5-turbo:
-    backend: openai
-    reasoning_effort: null
-    structured_outputs: false
-
   # ===== vLLM =====
 
   openai/gpt-oss-20b:
     backend: vllm
     reasoning_effort: [low, medium, high]
-    # thinking_stop はデフォルト(</think>)を使用
+    thinking_stop: "assistantfinal"  # Harmonyフォーマット: <|start|>assistant<|channel|>final<|message|>のデコード形式
 
   openai/gpt-oss-120b:
     backend: vllm
     reasoning_effort: [low, medium, high]
+    thinking_stop: "assistantfinal"
 
   # 別のthinkタグを使うモデルの例:
   # Qwen/Qwen3-8B:

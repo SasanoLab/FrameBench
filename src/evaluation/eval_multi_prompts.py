@@ -98,12 +98,15 @@ def get_thinking_stop(args) -> str:
 def _merge_sampling(phase: str, args, profile: dict) -> tuple[float, float, int]:
     """サンプリングパラメータを YAMLデフォルト → YAMLモデルプロファイル → CLI引数 の順で解決する
 
+    phase が "thinking" または "answer" の場合は thinking_sampling セクションを参照する
+    （thinkingモードではthinking・回答フェーズで同一パラメータを使用）。
+    phase が "sampling" の場合は sampling セクション（通常モード）を参照する。
+
     Returns:
         (temperature, top_p, top_k)
     """
-    section_key = f"{phase}_sampling" if phase in ("thinking", "answer") else "sampling"
+    section_key = "thinking_sampling" if phase in ("thinking", "answer") else "sampling"
     defaults = _VLLM_DEFAULTS.get(section_key, {})
-    # モデルプロファイルで個別上書きが定義されていれば優先
     model_sampling = profile.get(section_key, {})
 
     def _val(key: str, fallback):
@@ -113,8 +116,8 @@ def _merge_sampling(phase: str, args, profile: dict) -> tuple[float, float, int]
     top_p = _val("top_p", 0.8)
     top_k = _val("top_k", 20)
 
-    # CLI引数があれば最優先
-    if phase == "thinking":
+    # CLI引数があれば最優先（thinking/answer は共通の --thinking_* 引数）
+    if phase in ("thinking", "answer"):
         if getattr(args, "thinking_temperature", None) is not None:
             temperature = args.thinking_temperature
         if getattr(args, "thinking_top_p", None) is not None:
@@ -134,7 +137,6 @@ def _merge_sampling(phase: str, args, profile: dict) -> tuple[float, float, int]
 
 def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
     """vLLMを使用して単一プロンプトで推論を実行"""
-    from transformers import AutoTokenizer
     from vllm import LLM, SamplingParams
     from vllm.sampling_params import StructuredOutputsParams
 
@@ -153,19 +155,6 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
             print(f"⚠️  警告: モデル '{args.model}' は reasoning_effort をサポートしていません。")
             args.reasoning_effort = None
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
-
-    texts = []
-    for messages in all_messages:
-        text = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=args.enable_thinking,
-            reasoning_effort=args.reasoning_effort if args.reasoning_effort else None,
-        )
-        texts.append(text)
-
     llm_kwargs = {
         "model": args.model,
         "tensor_parallel_size": args.tensor_parallel_size,
@@ -176,6 +165,21 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
     if args.max_num_seqs is not None:
         llm_kwargs["max_num_seqs"] = args.max_num_seqs
     llm = LLM(**llm_kwargs)
+
+    tokenizer = llm.get_tokenizer()
+
+    texts = []
+    for messages in all_messages:
+        chat_template_kwargs = {
+            "tokenize": False,
+            "add_generation_prompt": True,
+            "enable_thinking": args.enable_thinking,
+        }
+        if args.reasoning_effort:
+            chat_template_kwargs["reasoning_effort"] = args.reasoning_effort
+        
+        text = tokenizer.apply_chat_template(messages, **chat_template_kwargs)
+        texts.append(text)
 
     thinking_stop = get_thinking_stop(args)
 
@@ -192,7 +196,7 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
         thinking_outputs = llm.generate(texts, thinking_params)
 
         answer_prompts = [
-            text + output.outputs[0].text + "\n\n"
+            text + output.outputs[0].text
             for text, output in zip(texts, thinking_outputs)
         ]
 
@@ -306,7 +310,7 @@ async def run_openai_async(all_messages, api_params):
     return generated_texts, first_response
 
 
-def run_single_prompt_experiment(args, prompt_file, prompt_name, all_problems_original, base_output_dir):
+def run_single_prompt_experiment(args, prompt_file, prompt_name, all_problems_original, base_output_dir, backend):
     """単一のプロンプトで実験を実行"""
     import copy
     
@@ -457,7 +461,7 @@ def main():
     # プロンプトファイルのリストを取得
     if args.prompt_files is None:
         # eval_promptフォルダ内の全ファイルを使用
-        project_root = Path(__file__).parent.parent
+        project_root = Path(__file__).parent.parent.parent
         prompt_dir = project_root / "eval_prompt"
         if not prompt_dir.exists():
             print(f"エラー: {prompt_dir} が見つかりません", file=sys.stderr)
@@ -515,7 +519,8 @@ def main():
             prompt_file, 
             prompt_name, 
             all_problems_original,
-            base_output_dir
+            base_output_dir,
+            backend
         )
         all_stats.append(stats)
     

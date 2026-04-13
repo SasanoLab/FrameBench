@@ -18,7 +18,7 @@ os.environ["LANGCHAIN_TRACING_V2"] = "false"
 load_dotenv()
 
 # プロジェクトルートディレクトリのパスを取得
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 # デフォルトのプロンプトテンプレート（文A/文B形式）
 DEFAULT_PROMPT_TEMPLATE = """
