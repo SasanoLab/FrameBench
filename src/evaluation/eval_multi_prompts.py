@@ -19,6 +19,7 @@ import json
 import sys
 from pathlib import Path
 import pandas as pd
+import yaml
 sys.path.insert(0, str(Path(__file__).parent))
 
 from eval_utils import (
@@ -30,29 +31,16 @@ from eval_utils import (
     load_prompt_template,
 )
 
+# モデルプロファイルをYAMLから読み込む
+_DEFAULT_PROFILES_PATH = Path(__file__).parent / "model_profiles.yaml"
 
-OPENAI_MODEL_CAPABILITIES = {
-    # === GPT-5シリーズ ===
-    "gpt-5.1": {"reasoning_effort": ["none", "minimal", "low", "medium", "high"], "structured_outputs": True},
-    "gpt-5": {"reasoning_effort": ["minimal", "low", "medium", "high"], "structured_outputs": True},
-    "gpt-5-nano": {"reasoning_effort": ["minimal", "low", "medium", "high"], "structured_outputs": True},
-    
-    # === o-シリーズ（推論モデル） ===
-    "o4-mini": {"reasoning_effort": ["low", "medium", "high"], "structured_outputs": True},
-    
-    # === GPT-4oシリーズ（reasoning_effort非対応） ===
-    "gpt-4o": {"reasoning_effort": None, "structured_outputs": True},
-    "gpt-4o-mini": {"reasoning_effort": None, "structured_outputs": True},
-    "gpt-4-turbo": {"reasoning_effort": None, "structured_outputs": False},
-    "gpt-4": {"reasoning_effort": None, "structured_outputs": False},
-    "gpt-3.5-turbo": {"reasoning_effort": None, "structured_outputs": False},
-}
+def _load_profiles(path: Path) -> dict:
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
-# vLLMモデルごとの機能サポート情報
-VLLM_MODEL_CAPABILITIES = {
-    "openai/gpt-oss-20b": {"reasoning_effort": ["low", "medium", "high"]},
-    "openai/gpt-oss-120b": {"reasoning_effort": ["low", "medium", "high"]},
-}
+_PROFILES = _load_profiles(_DEFAULT_PROFILES_PATH)
+_VLLM_DEFAULTS: dict = _PROFILES.get("vllm_defaults", {})
+_MODEL_PROFILES: dict = _PROFILES.get("models", {})
 
 # Structured Outputs用のJSON schema（四択問題用）
 CHOICE_SCHEMA = {
@@ -76,33 +64,72 @@ CHOICE_SCHEMA = {
 }
 
 
-def detect_backend(model_name):
-    """モデル名からバックエンドを自動判定"""
+def get_model_profile(model_name: str) -> dict:
+    """model_profiles.yaml からモデルプロファイルを取得する（前方一致フォールバック付き）"""
+    if model_name in _MODEL_PROFILES:
+        return _MODEL_PROFILES[model_name]
+    for key, profile in _MODEL_PROFILES.items():
+        if model_name.startswith(key):
+            return profile
+    # 未登録モデル: モデル名パターンからバックエンドを推定してデフォルト値を返す
     openai_patterns = ['gpt-', 'o4-', 'o1-', 'o3-']
-    for pattern in openai_patterns:
-        if model_name.startswith(pattern):
-            return 'openai'
-    return 'vllm'
+    if any(model_name.startswith(p) for p in openai_patterns):
+        print(f"警告: モデル '{model_name}' のプロファイルが未登録です。OpenAIデフォルトを使用します。")
+        return {"backend": "openai", "reasoning_effort": None, "structured_outputs": True}
+    print(f"警告: モデル '{model_name}' のプロファイルが未登録です。vLLMデフォルトを使用します。")
+    return {"backend": "vllm", "reasoning_effort": None}
 
 
-def get_openai_model_capabilities(model_name):
-    """モデル名から機能サポート情報を取得（OpenAI用）"""
-    if model_name in OPENAI_MODEL_CAPABILITIES:
-        return OPENAI_MODEL_CAPABILITIES[model_name]
-    
-    for base_model, caps in OPENAI_MODEL_CAPABILITIES.items():
-        if model_name.startswith(base_model):
-            return caps
-    
-    print(f"警告: モデル '{model_name}' の機能情報が不明です。デフォルト設定を使用します。")
-    return {"reasoning_effort": None, "structured_outputs": True}
+def detect_backend(model_name: str) -> str:
+    """モデルプロファイルからバックエンドを取得する"""
+    return get_model_profile(model_name).get("backend", "vllm")
 
 
-def get_vllm_model_capabilities(model_name):
-    """モデル名から機能サポート情報を取得（vLLM用）"""
-    if model_name in VLLM_MODEL_CAPABILITIES:
-        return VLLM_MODEL_CAPABILITIES[model_name]
-    return {"reasoning_effort": None}
+def get_thinking_stop(args) -> str:
+    """thinkタグの終了文字列を取得する（CLI引数 > YAMLモデルプロファイル > YAMLデフォルト の優先順位）"""
+    if getattr(args, "thinking_stop", None):
+        return args.thinking_stop
+    profile = get_model_profile(args.model)
+    if "thinking_stop" in profile:
+        return profile["thinking_stop"]
+    return _VLLM_DEFAULTS.get("thinking_stop", "</think>")
+
+
+def _merge_sampling(phase: str, args, profile: dict) -> tuple[float, float, int]:
+    """サンプリングパラメータを YAMLデフォルト → YAMLモデルプロファイル → CLI引数 の順で解決する
+
+    Returns:
+        (temperature, top_p, top_k)
+    """
+    section_key = f"{phase}_sampling" if phase in ("thinking", "answer") else "sampling"
+    defaults = _VLLM_DEFAULTS.get(section_key, {})
+    # モデルプロファイルで個別上書きが定義されていれば優先
+    model_sampling = profile.get(section_key, {})
+
+    def _val(key: str, fallback):
+        return model_sampling.get(key, defaults.get(key, fallback))
+
+    temperature = _val("temperature", 0.7)
+    top_p = _val("top_p", 0.8)
+    top_k = _val("top_k", 20)
+
+    # CLI引数があれば最優先
+    if phase == "thinking":
+        if getattr(args, "thinking_temperature", None) is not None:
+            temperature = args.thinking_temperature
+        if getattr(args, "thinking_top_p", None) is not None:
+            top_p = args.thinking_top_p
+        if getattr(args, "thinking_top_k", None) is not None:
+            top_k = args.thinking_top_k
+    else:
+        if getattr(args, "temperature", None) is not None:
+            temperature = args.temperature
+        if getattr(args, "top_p", None) is not None:
+            top_p = args.top_p
+        if getattr(args, "top_k", None) is not None:
+            top_k = args.top_k
+
+    return temperature, top_p, top_k
 
 
 def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
@@ -110,13 +137,13 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
     from transformers import AutoTokenizer
     from vllm import LLM, SamplingParams
     from vllm.sampling_params import StructuredOutputsParams
-    
-    caps = get_vllm_model_capabilities(args.model)
-    supports_reasoning = caps["reasoning_effort"] is not None
-    
+
+    profile = get_model_profile(args.model)
+    supports_reasoning = profile.get("reasoning_effort") is not None
+
     if args.reasoning_effort:
         if supports_reasoning:
-            supported_efforts = caps["reasoning_effort"]
+            supported_efforts = profile["reasoning_effort"]
             if args.reasoning_effort not in supported_efforts:
                 print(f"⚠️  警告: reasoning_effort '{args.reasoning_effort}' はこのモデルでサポートされていない可能性があります。")
                 print(f"    サポート値: {supported_efforts}")
@@ -125,9 +152,9 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
         else:
             print(f"⚠️  警告: モデル '{args.model}' は reasoning_effort をサポートしていません。")
             args.reasoning_effort = None
-    
+
     tokenizer = AutoTokenizer.from_pretrained(args.model)
-    
+
     texts = []
     for messages in all_messages:
         text = tokenizer.apply_chat_template(
@@ -138,11 +165,11 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
             reasoning_effort=args.reasoning_effort if args.reasoning_effort else None,
         )
         texts.append(text)
-    
+
     llm_kwargs = {
-        "model": args.model, 
-        'tensor_parallel_size': args.tensor_parallel_size,
-        'gpu_memory_utilization': args.gpu_memory_utilization
+        "model": args.model,
+        "tensor_parallel_size": args.tensor_parallel_size,
+        "gpu_memory_utilization": args.gpu_memory_utilization,
     }
     if args.max_model_len is not None:
         llm_kwargs["max_model_len"] = args.max_model_len
@@ -150,77 +177,82 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
         llm_kwargs["max_num_seqs"] = args.max_num_seqs
     llm = LLM(**llm_kwargs)
 
+    thinking_stop = get_thinking_stop(args)
+
     if args.enable_thinking:
+        t_temp, t_top_p, t_top_k = _merge_sampling("thinking", args, profile)
         thinking_params = SamplingParams(
-            temperature=0.6, 
-            top_p=0.95, 
-            top_k=20, 
+            temperature=t_temp,
+            top_p=t_top_p,
+            top_k=t_top_k,
             max_tokens=args.thinking_max_tokens,
-            stop=["</think>"],
-            include_stop_str_in_output=True
+            stop=[thinking_stop],
+            include_stop_str_in_output=True,
         )
         thinking_outputs = llm.generate(texts, thinking_params)
-        
+
         answer_prompts = [
             text + output.outputs[0].text + "\n\n"
             for text, output in zip(texts, thinking_outputs)
         ]
-        
-        structured_outputs = StructuredOutputsParams(choice=['1', '2', '3', '4'])
+
+        a_temp, a_top_p, a_top_k = _merge_sampling("answer", args, profile)
+        structured_outputs = StructuredOutputsParams(choice=["1", "2", "3", "4"])
         answer_params = SamplingParams(
-            temperature=0.7, 
-            top_p=0.8, 
-            top_k=20, 
+            temperature=a_temp,
+            top_p=a_top_p,
+            top_k=a_top_k,
             max_tokens=args.answer_max_tokens,
-            structured_outputs=structured_outputs
+            structured_outputs=structured_outputs,
         )
         answer_outputs = llm.generate(answer_prompts, answer_params)
-        
+
         generated_texts = [
             thinking_output.outputs[0].text + "\n\n" + answer_output.outputs[0].text
             for thinking_output, answer_output in zip(thinking_outputs, answer_outputs)
         ]
     else:
-        structured_outputs = StructuredOutputsParams(choice=['1', '2', '3', '4'])
+        s_temp, s_top_p, s_top_k = _merge_sampling("sampling", args, profile)
+        structured_outputs = StructuredOutputsParams(choice=["1", "2", "3", "4"])
         sampling_params = SamplingParams(
-            temperature=0.7, 
-            top_p=0.8, 
-            top_k=20, 
+            temperature=s_temp,
+            top_p=s_top_p,
+            top_k=s_top_k,
             max_tokens=args.max_tokens,
-            structured_outputs=structured_outputs
+            structured_outputs=structured_outputs,
         )
         vllm_outputs = llm.generate(texts, sampling_params)
         generated_texts = [output.outputs[0].text for output in vllm_outputs]
-    
-    all_problems, stats = process_results(all_problems, generated_texts)
+
+    all_problems, stats = process_results(all_problems, generated_texts, thinking_stop=thinking_stop)
     return all_problems, stats
 
 
 def run_openai_single_prompt(args, all_problems, all_messages, output_dir):
     """OpenAI APIを使用して単一プロンプトで推論を実行"""
     import asyncio
-    
-    caps = get_openai_model_capabilities(args.model)
-    supports_reasoning = caps["reasoning_effort"] is not None
+
+    profile = get_model_profile(args.model)
+    supports_reasoning = profile.get("reasoning_effort") is not None
     api_params = {"model": args.model}
-    
+
     api_params["response_format"] = CHOICE_SCHEMA
 
     if supports_reasoning:
         if args.reasoning_effort:
-            if args.reasoning_effort not in caps["reasoning_effort"]:
+            if args.reasoning_effort not in profile["reasoning_effort"]:
                 print(f"警告: '{args.reasoning_effort}' はこのモデルでサポートされていません。"
-                      f" 対応値: {caps['reasoning_effort']}")
+                      f" 対応値: {profile['reasoning_effort']}")
             api_params["reasoning_effort"] = args.reasoning_effort
         else:
             api_params["reasoning_effort"] = "medium"
     else:
         if args.reasoning_effort:
             print("警告: このモデルはreasoning_effortをサポートしていません。無視されます。")
-    
+
     actual_params = {
         "requested": {k: v for k, v in api_params.items() if k != "response_format"},
-        "model_capabilities": caps,
+        "model_profile": profile,
         "first_response_model": None,
     }
     
@@ -274,7 +306,7 @@ async def run_openai_async(all_messages, api_params):
     return generated_texts, first_response
 
 
-def run_single_prompt_experiment(args, prompt_file, prompt_name, all_problems_original):
+def run_single_prompt_experiment(args, prompt_file, prompt_name, all_problems_original, base_output_dir):
     """単一のプロンプトで実験を実行"""
     import copy
     
@@ -291,30 +323,7 @@ def run_single_prompt_experiment(args, prompt_file, prompt_name, all_problems_or
     
     # メッセージを生成
     all_messages = create_messages(all_problems, prompt_template)
-    
-    # 出力ディレクトリを作成
-    suffix = ""
-    backend = detect_backend(args.model)
-    
-    if backend == 'vllm':
-        effective_thinking = args.enable_thinking or (args.reasoning_effort is not None)
-        if effective_thinking:
-            suffix = "_thinking"
-        else:
-            suffix = "_no_thinking"
-        if args.reasoning_effort:
-            suffix += f"_reasoning_{args.reasoning_effort}"
-    else:  # openai
-        caps = get_openai_model_capabilities(args.model)
-        supports_reasoning = caps["reasoning_effort"] is not None
-        if supports_reasoning and args.reasoning_effort:
-            suffix = f"_reasoning_{args.reasoning_effort}"
-        elif supports_reasoning:
-            suffix = "_reasoning_medium"
-    
-    safe_model_name = args.model.replace('/', '_').replace(':', '_')
-    num_str = str(args.num) if args.num is not None else "all"
-    output_dir = Path(args.output_dir) / args.language / num_str / f"{safe_model_name}{suffix}" / prompt_name
+    output_dir = base_output_dir / prompt_name
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # バックエンドに応じて推論を実行
@@ -411,8 +420,37 @@ def main():
                            help='思考モードでの思考部分の最大出力トークン数（デフォルト: 32768）')
     vllm_group.add_argument('--answer_max_tokens', type=int, default=10,
                            help='思考モードでの回答部分の最大出力トークン数（デフォルト: 10）')
-    
+
+    # サンプリングパラメータ上書き（vLLM）
+    # 未指定時は model_profiles.yaml の値が使われる
+    sampling_group = parser.add_argument_group('サンプリングパラメータ上書き（vLLM、未指定時はmodel_profiles.yaml準拠）')
+    sampling_group.add_argument('--temperature', type=float, default=None,
+                                help='通常モード・回答フェーズの temperature')
+    sampling_group.add_argument('--top_p', type=float, default=None,
+                                help='通常モード・回答フェーズの top_p')
+    sampling_group.add_argument('--top_k', type=int, default=None,
+                                help='通常モード・回答フェーズの top_k')
+    sampling_group.add_argument('--thinking_temperature', type=float, default=None,
+                                help='thinkingフェーズの temperature')
+    sampling_group.add_argument('--thinking_top_p', type=float, default=None,
+                                help='thinkingフェーズの top_p')
+    sampling_group.add_argument('--thinking_top_k', type=int, default=None,
+                                help='thinkingフェーズの top_k')
+    sampling_group.add_argument('--thinking_stop', type=str, default=None,
+                                help='thinkタグの終了文字列（デフォルト: model_profiles.yaml の thinking_stop）')
+
+    # プロファイルファイルの上書き
+    parser.add_argument('--model_profile_file', type=str, default=None,
+                        help='モデルプロファイルYAMLファイルのパス（デフォルト: src/evaluation/model_profiles.yaml）')
+
     args = parser.parse_args()
+
+    # カスタムプロファイルファイルが指定された場合は再読み込み
+    if args.model_profile_file:
+        global _PROFILES, _VLLM_DEFAULTS, _MODEL_PROFILES
+        _PROFILES = _load_profiles(Path(args.model_profile_file))
+        _VLLM_DEFAULTS = _PROFILES.get("vllm_defaults", {})
+        _MODEL_PROFILES = _PROFILES.get("models", {})
     
     print(f"引数: {args}\n")
     
@@ -439,6 +477,30 @@ def main():
     
     # 問題を読み込む（全プロンプトで共通）
     all_problems_original = load_problems(args.dataset, args.num, args.dataset_split)
+
+    # 出力ディレクトリを作成
+    suffix = ""
+    backend = detect_backend(args.model)
+    profile = get_model_profile(args.model)
+
+    if backend == 'vllm':
+        effective_thinking = args.enable_thinking or (args.reasoning_effort is not None)
+        if effective_thinking:
+            suffix = "_thinking"
+        else:
+            suffix = "_no_thinking"
+        if args.reasoning_effort:
+            suffix += f"_reasoning_{args.reasoning_effort}"
+    else:  # openai
+        supports_reasoning = profile.get("reasoning_effort") is not None
+        if supports_reasoning and args.reasoning_effort:
+            suffix = f"_reasoning_{args.reasoning_effort}"
+        elif supports_reasoning:
+            suffix = "_reasoning_medium"
+    
+    safe_model_name = args.model.replace('/', '_').replace(':', '_')
+    num_str = str(args.num) if args.num is not None else "all"
+    base_output_dir = Path(args.output_dir) / args.language / num_str / f"{safe_model_name}{suffix}"
     
     # 各プロンプトで実験を実行
     all_stats = []
@@ -452,34 +514,13 @@ def main():
             args, 
             prompt_file, 
             prompt_name, 
-            all_problems_original
+            all_problems_original,
+            base_output_dir
         )
         all_stats.append(stats)
     
     # 結果を集計
-    suffix = ""
-    backend = detect_backend(args.model)
-    
-    if backend == 'vllm':
-        effective_thinking = args.enable_thinking or (args.reasoning_effort is not None)
-        if effective_thinking:
-            suffix = "_thinking"
-        else:
-            suffix = "_no_thinking"
-        if args.reasoning_effort:
-            suffix += f"_reasoning_{args.reasoning_effort}"
-    else:  # openai
-        caps = get_openai_model_capabilities(args.model)
-        supports_reasoning = caps["reasoning_effort"] is not None
-        if supports_reasoning and args.reasoning_effort:
-            suffix = f"_reasoning_{args.reasoning_effort}"
-        elif supports_reasoning:
-            suffix = "_reasoning_medium"
-    
-    safe_model_name = args.model.replace('/', '_').replace(':', '_')
-    num_str = str(args.num) if args.num is not None else "all"
-    base_output_dir = Path(args.output_dir) / args.language / num_str / f"{safe_model_name}{suffix}"
-    
+
     aggregate_results(all_stats, prompt_names, base_output_dir)
 
 

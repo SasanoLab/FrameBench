@@ -59,21 +59,26 @@ def load_prompt_template(prompt_file=None):
         return f.read().strip()
 
 
-def extract_choice_number(text):
+def extract_choice_number(text, thinking_stop=None):
     """テキストから選択肢番号（1, 2, 3, or 4）を抽出する関数
-    
+
     以下の形式に対応:
     - JSON形式: {"answer": "1"} or {"answer": "2"} etc.
-    - thinking形式: <think>...</think>の後の数字
+    - thinking形式: <think>...</think>（または任意のthinking_stop）の後の数字
     - プレーンテキスト: 1, 2, 3, or 4
+
+    Args:
+        text: 抽出対象のテキスト
+        thinking_stop: thinkタグの終了文字列（例: "</think>"）。
+                       指定された場合はその後のテキストを対象にする。
     """
     import json
-    
+
     if text is None:
         return None
-    
+
     text = str(text).strip()
-    
+
     # JSON形式の場合（Structured Outputs）
     if text.startswith('{'):
         try:
@@ -83,12 +88,20 @@ def extract_choice_number(text):
                 return int(answer)
         except json.JSONDecodeError:
             pass  # JSONパースに失敗したら通常の処理へ
-    
-    # thinking形式の場合
-    if "</think>" in text:
-        text = text.split("</think>")[1].strip()
-    elif "assistantfinal" in text:
-        text = text.split("assistantfinal")[1].strip()
+
+    # thinking形式の場合: 指定されたstop文字列 → 既知フォールバックの順で試みる
+    stop_candidates = []
+    if thinking_stop:
+        stop_candidates.append(thinking_stop)
+    # 既知のフォールバック（thinking_stopと重複する場合はスキップ）
+    for fallback in ["</think>", "assistantfinal"]:
+        if fallback not in stop_candidates:
+            stop_candidates.append(fallback)
+
+    for stop in stop_candidates:
+        if stop in text:
+            text = text.split(stop)[-1].strip()
+            break
 
     # 1, 2, 3, 4のいずれかが単独で出現する場合
     # 優先順位: 最初に出現する数字
@@ -429,13 +442,15 @@ def create_messages(problems, prompt_template=None):
     return all_messages
 
 
-def process_results(all_problems, generated_texts):
+def process_results(all_problems, generated_texts, thinking_stop=None):
     """生成されたテキストを処理して結果を集計
-    
+
     Args:
         all_problems: 問題のリスト
         generated_texts: 生成されたテキストのリスト
-    
+        thinking_stop: thinkタグの終了文字列（例: "</think>"）。
+                       extract_choice_number に渡される。
+
     Returns:
         all_problems: 結果が追加された問題のリスト
         stats: 統計情報の辞書
@@ -444,9 +459,9 @@ def process_results(all_problems, generated_texts):
     choice_type_counts = {1: 0, 2: 0, 3: 0, 4: 0}  # 元の選択肢タイプごとのカウント
     error_count = 0
     scores = []
-    
+
     for i, generated_text in enumerate(generated_texts):
-        extracted_choice = extract_choice_number(generated_text)
+        extracted_choice = extract_choice_number(generated_text, thinking_stop=thinking_stop)
         
         # ランダム化された選択肢から正解を見つける
         expected_choice = all_problems[i]['expected_choice']

@@ -1,0 +1,90 @@
+# 評価用モデルプロファイル
+# モデル名はプレフィックス一致で検索されます（例: "gpt-5.1-2025-04-14" は "gpt-5.1" にマッチ）
+# 新しいモデルを追加する際はここに追記してください
+
+# vLLM共通デフォルトサンプリングパラメータ
+vllm_defaults:
+  # thinkタグの終了文字列（生成のstopとレスポンス解析の両方に使われる）
+  thinking_stop: "</think>"
+  # thinking フェーズのサンプリング設定
+  thinking_sampling:
+    temperature: 0.6
+    top_p: 0.95
+    top_k: 20
+  # thinking後の回答フェーズのサンプリング設定
+  answer_sampling:
+    temperature: 0.7
+    top_p: 0.8
+    top_k: 20
+  # 通常モード（thinking無効）のサンプリング設定
+  sampling:
+    temperature: 0.7
+    top_p: 0.8
+    top_k: 20
+
+# モデル別プロファイル
+models:
+
+  # ===== OpenAI =====
+
+  gpt-5.1:
+    backend: openai
+    reasoning_effort: [none, minimal, low, medium, high]
+    structured_outputs: true
+
+  gpt-5:
+    backend: openai
+    reasoning_effort: [minimal, low, medium, high]
+    structured_outputs: true
+
+  gpt-5-nano:
+    backend: openai
+    reasoning_effort: [minimal, low, medium, high]
+    structured_outputs: true
+
+  o4-mini:
+    backend: openai
+    reasoning_effort: [low, medium, high]
+    structured_outputs: true
+
+  gpt-4o:
+    backend: openai
+    reasoning_effort: null
+    structured_outputs: true
+
+  gpt-4o-mini:
+    backend: openai
+    reasoning_effort: null
+    structured_outputs: true
+
+  gpt-4-turbo:
+    backend: openai
+    reasoning_effort: null
+    structured_outputs: false
+
+  gpt-4:
+    backend: openai
+    reasoning_effort: null
+    structured_outputs: false
+
+  gpt-3.5-turbo:
+    backend: openai
+    reasoning_effort: null
+    structured_outputs: false
+
+  # ===== vLLM =====
+
+  openai/gpt-oss-20b:
+    backend: vllm
+    reasoning_effort: [low, medium, high]
+    # thinking_stop はデフォルト(</think>)を使用
+
+  openai/gpt-oss-120b:
+    backend: vllm
+    reasoning_effort: [low, medium, high]
+
+  # 別のthinkタグを使うモデルの例:
+  # Qwen/Qwen3-8B:
+  #   backend: vllm
+  #   reasoning_effort: null
+  #   thinking_stop: "</think>"   # Qwen3は同じ</think>だが、異なる場合はここで上書き
