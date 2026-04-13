@@ -10,7 +10,7 @@
 - Sentence B': 追加で生成されたNoになる文
 
 使い方：
-    python gen_additional_sentences.py --qa_file <入力ファイル> --output_dir <出力ディレクトリ>
+    python src/generation/3_gen_additional_sentences.py --qa_file <入力ファイル> --output_dir <出力ディレクトリ>
 
 特徴：
 - Both sentencesとNeither sentenceを同時に生成してマージ

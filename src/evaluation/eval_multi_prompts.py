@@ -5,13 +5,13 @@
 複数のプロンプトで四択問題を評価し、結果を集計するスクリプト
 使用例:
   # eval_promptフォルダ内の全プロンプトで実験
-  uv run python src/eval_multi_prompts.py --model gpt-4o --dataset data/ja/gpt5/qa.jsonl
+  uv run python src/evaluation/eval_multi_prompts.py --model gpt-4o --dataset data/ja/gpt5/qa.jsonl
   
   # HuggingFace Datasetから読み込む場合
-  uv run python src/eval_multi_prompts.py --model gpt-4o --dataset cl-nagoya/jFrameBench
+  uv run python src/evaluation/eval_multi_prompts.py --model gpt-4o --dataset cl-nagoya/jFrameBench
   
   # 特定のプロンプトファイルと問題数を指定
-  uv run python src/eval_multi_prompts.py --model gpt-4o --num 100 --prompt_files eval_prompt/prompt_v1.txt eval_prompt/prompt_v2.txt --dataset cl-nagoya/jFrameBench
+  uv run python src/evaluation/eval_multi_prompts.py --model gpt-4o --num 100 --prompt_files eval_prompt/prompt_v1.txt eval_prompt/prompt_v2.txt --dataset cl-nagoya/jFrameBench
 """
 
 import argparse
@@ -19,6 +19,8 @@ import json
 import sys
 from pathlib import Path
 import pandas as pd
+sys.path.insert(0, str(Path(__file__).parent))
+
 from eval_utils import (
     load_problems,
     create_messages,
@@ -27,9 +29,6 @@ from eval_utils import (
     save_results,
     load_prompt_template,
 )
-
-# 親ディレクトリをパスに追加
-sys.path.insert(0, str(Path(__file__).parent))
 
 
 OPENAI_MODEL_CAPABILITIES = {

@@ -53,7 +53,7 @@ EOF
 ```
 
 ## 🛠️ ベンチマークの構築
-利用可能モデルは'config.yaml'を参照ください。
+利用可能モデルは`src/generation/config.yaml`を参照ください。
 
 ### Step 1: フレーム知識の前処理
 
@@ -130,11 +130,11 @@ FrameBenchを用いてLLMを評価します。
 ### 評価方法
 スクリプトの実行
 ```bash
-bash script/run_eval.sh gpt-5-nano
+bash scripts/run_eval.sh gpt-5-nano
 ```
 もしくは
 ```bash
-uv run python src/eval_multi_prompts.py \
+uv run python src/evaluation/eval_multi_prompts.py \
     --model gpt-4o \
     --dataset cl-nagoya/jFrameBench \
     --num 100 \
@@ -170,24 +170,28 @@ uv run python src/eval_multi_prompts.py \
 
 ```
 framebench/
-├── src/                          # ソースコード
-│   ├── 1-1_frame_parse.py        # FrameNet XMLパーサー
-│   ├── 1-2_lu_driven_edit.py    # 語彙単位編集
-│   ├── 2_generate_frame_qa.py    # QA生成
-│   ├── 3_gen_additional_sentences.py  # 追加文生成
-│   ├── eval_multi_prompts.py    # 複数プロンプト評価
-│   ├── eval_common_four_choice.py  # 評価共通モジュール
-│   ├── utils/                    # ユーティリティ
-│   │   ├── llm.py                # LLMラッパー
-│   │   └── utils.py              # 共通ユーティリティ
-│   └── prompts/                  # プロンプトテンプレート
-│       ├── __init__.py
-│       ├── gen_other_choice_ja.toml  # 選択肢生成プロンプト
-│       ├── make_qa_ja.toml       # QA生成プロンプト（日本語）
+├── src/
+│   ├── generation/               # ベンチマーク構築コード
+│   │   ├── 1-1_frame_parse.py    # FrameNet XMLパーサー
+│   │   ├── 1-2_lu_driven_edit.py # 語彙単位編集
+│   │   ├── 2_generate_frame_qa.py    # QA生成
+│   │   ├── 3_gen_additional_sentences.py  # 追加文生成
+│   │   ├── config.yaml           # 生成用モデル設定
+│   │   ├── utils/                # 生成系ユーティリティ
+│   │   │   ├── llm.py            # LLMラッパー
+│   │   │   └── utils.py          # 共通ユーティリティ
+│   │   └── prompts/              # プロンプトテンプレート
+│   │       ├── __init__.py
+│   │       ├── gen_other_choice_ja.toml  # 選択肢生成プロンプト
+│   │       └── make_qa_ja.toml   # QA生成プロンプト（日本語）
+│   └── evaluation/               # 評価コード
+│       ├── eval_multi_prompts.py # 複数プロンプト評価
+│       └── eval_utils.py         # 評価ユーティリティ
 ├── scripts/                      # 実行スクリプト
-│   ├── step1.sh                 # Step 1実行
-│   ├── step2.sh                 # Step 2実行
-│   ├── step3.sh                 # Step 3実行
+│   ├── step1.sh                  # Step 1実行
+│   ├── step2.sh                  # Step 2実行
+│   ├── step3.sh                  # Step 3実行
+│   └── run_eval.sh               # 評価実行
 ├── eval_prompt/                  # 評価用プロンプト
 │   ├── prompt_v1.txt
 │   ├── prompt_v2.txt
@@ -195,25 +199,24 @@ framebench/
 │   ├── prompt_v4.txt
 │   └── prompt_v5.txt
 ├── data/                         # データディレクトリ
-│   ├── <language>-framenet/     # フレームデータ
-│   │   ├── raw_frame/           # 生FrameNet XMLファイル
-│   └── ja/              # 生成データ
+│   ├── <language>-framenet/      # フレームデータ
+│   │   └── raw_frame/            # 生FrameNet XMLファイル
+│   └── ja/                       # 生成データ
 │       └── gpt5/
-│           └── qa.jsonl         # jFrameBenchデータ
+│           └── qa.jsonl          # jFrameBenchデータ
 ├── output/                       # 評価結果出力
 │   └── <language>/
-│       └── 
-│           └── <num>/           # 評価問題数（100, allなど）
-│               └── <model>_<suffix>/
-│                   ├── <prompt_name>/  # 各プロンプトの結果
-│                   │   ├── result.tsv  # 詳細な評価結果
-│                   │   ├── summary.txt # 統計サマリー
-│                   │   └── params.json # 使用されたパラメータ
-│                   ├── aggregated_summary.txt  # 集計結果
-│                   └── aggregated_summary.tsv  
+│       └── <num>/                # 評価問題数（100, allなど）
+│           └── <model>_<suffix>/
+│               ├── <prompt_name>/
+│               │   ├── result.tsv
+│               │   ├── summary.txt
+│               │   └── params.json
+│               ├── aggregated_summary.txt
+│               └── aggregated_summary.tsv
 ├── tools/                        # アノテーションツール（別README参照）
-│   ├── app.py                   # メインアプリケーション
-│   ├── src/                     # ツールソースコード
+│   ├── app.py
+│   ├── src/
 │   │   ├── common.py
 │   │   ├── dataset_manager.py
 │   │   ├── evaluation_app.py
@@ -222,7 +225,7 @@ framebench/
 │   │   ├── evaluation_criteria.yaml
 │   │   ├── auth_config.json
 │   │   └── user_assignment.json
-│   ├── postprocess/             # アノテーション後処理
+│   ├── postprocess/
 │   │   ├── for_step2.py
 │   │   ├── for_2nd_annotation.py
 │   │   ├── for_human_eval.py
@@ -230,8 +233,7 @@ framebench/
 │   ├── README.md
 │   ├── pyproject.toml
 │   └── uv.lock
-├── config.yaml                  # モデル設定ファイル
-├── pyproject.toml               # プロジェクト設定
-├── uv.lock                      # 依存関係ロック
-└── README.md                    # このファイル
+├── pyproject.toml                # プロジェクト設定
+├── uv.lock                       # 依存関係ロック
+└── README.md                     # このファイル
 ```

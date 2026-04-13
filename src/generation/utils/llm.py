@@ -11,7 +11,7 @@ from tqdm import tqdm
 import yaml
 
 # モデル設定（JSON/YAMLで管理可能）
-with open(os.path.join(os.path.dirname(__file__), '../../config.yaml'), encoding='utf-8') as f:
+with open(os.path.join(os.path.dirname(__file__), '../config.yaml'), encoding='utf-8') as f:
     _yaml = yaml.safe_load(f)
 MODEL_CONFIGS = _yaml['models']
 

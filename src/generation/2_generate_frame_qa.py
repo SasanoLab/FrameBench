@@ -5,7 +5,7 @@
 フレームペアを生成して、問題文を生成する。
 
 Usage:
-python 2_generate_frame_qa.py
+python src/generation/2_generate_frame_qa.py
     --data_root <data_root>
     --language <language>
     --model <model>
