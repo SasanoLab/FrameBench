@@ -14,19 +14,20 @@ dependencies = [
     # Langchain dependencies (評価に必要)
     "pyyaml>=6.0.2",
     "datasets>=4.5.0",
+    "transformers>=4.57.3",
 ]
 
 [project.optional-dependencies]
 # ベンチマーク生成に必要な追加依存関係
 generation = [
-    "numpy<2.0.0",
+    "numpy>=1.26.0",
     "jinja2>=3.1.0",
     "nltk>=3.9.1",
 ]
 # vLLMを使用する場合（ローカルLLM評価用）
 vllm = [
-    "vllm==0.11.0",
-    "transformers>=4.52.3",
+    "vllm>=0.19.0",
+    "transformers>=4.57.3",
 ]
 # 開発・可視化ツール
 dev = [
@@ -40,11 +41,11 @@ dev = [
 ]
 # すべての依存関係をインストール（generation + vllm + dev）
 all = [
-    "numpy<2.0.0",
+    "numpy>=1.26.0",
     "jinja2>=3.1.0",
     "nltk>=3.9.1",
-    "vllm==0.11.0",
-    "transformers>=4.52.3",
+    "vllm>=0.19.0",
+    "transformers>=4.57.3",
     "ipykernel>=6.29.5",
     "matplotlib>=3.10.3",
     "seaborn>=0.13.2",
