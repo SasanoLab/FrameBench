@@ -1,6 +1,14 @@
 # 評価用モデルプロファイル
 # モデル名はプレフィックス一致で検索されます（例: "gpt-5.1-2025-04-14" は "gpt-5.1" にマッチ）
 # 新しいモデルを追加する際はここに追記してください
+#
+# 利用可能なフィールド:
+#   backend: "openai" | "vllm" - 使用するバックエンド（必須）
+#   reasoning_effort: リスト形式で対応するreasoning_effortレベルを指定（thinking対応モデル）
+#   supports_thinking: false - thinkingに対応していない場合は明示的に指定
+#   thinking_stop: thinkingモードの停止文字列（vLLMのみ、デフォルト: "</think>"）
+#   trust_remote_code: true - カスタムモデルコードを使用する場合に必要（vLLMのみ）
+#   structured_outputs: true - 構造化出力をサポートする場合（OpenAI APIのみ）
 
 # vLLM共通デフォルトサンプリングパラメータ
 vllm_defaults:
@@ -42,15 +50,92 @@ models:
   openai/gpt-oss-20b:
     backend: vllm
     reasoning_effort: [low, medium, high]
-    thinking_stop: "assistantfinal"  # Harmonyフォーマット: <|start|>assistant<|channel|>final<|message|>のデコード形式
-
+    thinking_stop: "assistantfinal"
   openai/gpt-oss-120b:
     backend: vllm
     reasoning_effort: [low, medium, high]
     thinking_stop: "assistantfinal"
 
-  # 別のthinkタグを使うモデルの例:
-  # Qwen/Qwen3-8B:
-  #   backend: vllm
-  #   reasoning_effort: null
-  #   thinking_stop: "</think>"   # Qwen3は同じ</think>だが、異なる場合はここで上書き
+  # Qwen3シリーズ
+  Qwen/Qwen3-0.6B:
+    backend: vllm
+    supports_thinking: true
+  Qwen/Qwen3-1.7B:
+    backend: vllm
+    supports_thinking: true
+  Qwen/Qwen3-4B:
+    backend: vllm
+    supports_thinking: true
+  Qwen/Qwen3-32B:
+    backend: vllm
+    supports_thinking: true
+
+  # Qwen3.5シリーズ 
+  #TODO: --language-model-onlyオプションを付けたほうがいいかも
+  Qwen/Qwen3.5-0.8B:
+    backend: vllm
+    supports_thinking: true
+  Qwen/Qwen3.5-2B:
+    backend: vllm
+    supports_thinking: true
+  Qwen/Qwen3.5-4B:
+    backend: vllm
+    supports_thinking: true
+  Qwen/Qwen3.5-9B:
+    backend: vllm
+    supports_thinking: true
+  Qwen/Qwen3.5-27B:
+    backend: vllm
+    supports_thinking: true
+  Qwen/Qwen3.5-35B-A3B:
+    backend: vllm
+    supports_thinking: true
+
+  # Google Gemma3シリーズ
+  google/gemma-3-1b-it:
+    backend: vllm
+    supports_thinking: false
+  google/gemma-3-4b-it:
+    backend: vllm
+    supports_thinking: false
+  google/gemma-3-12b-it:
+    backend: vllm
+    supports_thinking: false
+  google/gemma-3-27b-it:
+    backend: vllm
+    supports_thinking: false
+
+  # Google Gemma4シリーズ
+  google/gemma-4-E2B-it:
+    backend: vllm
+    supports_thinking: true
+    thinking_stop: "<channel|>"
+    trust_remote_code: true
+  google/gemma-4-E4B-it:
+    backend: vllm
+    supports_thinking: true
+    thinking_stop: "<channel|>"
+    trust_remote_code: true
+  google/gemma-4-26B-A4B-it:
+    backend: vllm
+    supports_thinking: true
+    thinking_stop: "<channel|>"
+    trust_remote_code: true
+  google/gemma-4-31B-it:
+    backend: vllm
+    supports_thinking: true
+    thinking_stop: "<channel|>"
+    trust_remote_code: true 
+
+  llm-jp/llm-jp-4-8b-thinking:
+    backend: vllm
+    supports_thinking: true
+    reasoning_effort: [low, medium, high]
+    thinking_stop: " assistant final "
+    trust_remote_code: true
+  llm-jp/llm-jp-4-32b-a3bthinking:
+    backend: vllm
+    supports_thinking: true
+    reasoning_effort: [low, medium, high]
+    thinking_stop: " assistant final "
+    trust_remote_code: true
