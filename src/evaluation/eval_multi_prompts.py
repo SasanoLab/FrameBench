@@ -141,7 +141,11 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
     from vllm.sampling_params import StructuredOutputsParams
 
     profile = get_model_profile(args.model)
-    supports_reasoning = profile.get("reasoning_effort") is not None
+    # supports_thinking: false が明示されている場合は優先
+    if profile.get("supports_thinking") is False:
+        supports_reasoning = False
+    else:
+        supports_reasoning = profile.get("reasoning_effort") is not None
 
     if args.reasoning_effort:
         if supports_reasoning:
@@ -164,6 +168,10 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
         llm_kwargs["max_model_len"] = args.max_model_len
     if args.max_num_seqs is not None:
         llm_kwargs["max_num_seqs"] = args.max_num_seqs
+    trust_remote_code = args.trust_remote_code or profile.get("trust_remote_code", False)
+    if trust_remote_code:
+        llm_kwargs["trust_remote_code"] = True
+    
     llm = LLM(**llm_kwargs)
 
     tokenizer = llm.get_tokenizer()
@@ -237,7 +245,11 @@ def run_openai_single_prompt(args, all_problems, all_messages, output_dir):
     import asyncio
 
     profile = get_model_profile(args.model)
-    supports_reasoning = profile.get("reasoning_effort") is not None
+    # supports_thinking: false が明示されている場合は優先
+    if profile.get("supports_thinking") is False:
+        supports_reasoning = False
+    else:
+        supports_reasoning = profile.get("reasoning_effort") is not None
     api_params = {"model": args.model}
 
     api_params["response_format"] = CHOICE_SCHEMA
@@ -424,6 +436,8 @@ def main():
                            help='思考モードでの思考部分の最大出力トークン数（デフォルト: 32768）')
     vllm_group.add_argument('--answer_max_tokens', type=int, default=10,
                            help='思考モードでの回答部分の最大出力トークン数（デフォルト: 10）')
+    vllm_group.add_argument('--trust_remote_code', action='store_true',
+                           help='リモートコードの実行を許可（カスタムモデルコードを使用するモデルで必要）')
 
     # サンプリングパラメータ上書き（vLLM）
     # 未指定時は model_profiles.yaml の値が使われる
@@ -488,6 +502,15 @@ def main():
     profile = get_model_profile(args.model)
 
     if backend == 'vllm':
+        vllm_supports_reasoning = (
+            profile.get("supports_thinking") is not False
+            and profile.get("reasoning_effort") is not None
+        )
+        # thinking が有効かつ reasoning_effort 対応モデルなら medium をデフォルトに設定
+        if args.enable_thinking and vllm_supports_reasoning and not args.reasoning_effort:
+            args.reasoning_effort = "medium"
+            print(f"ℹ️  reasoning_effort が未指定のため、デフォルト値 'medium' を使用します。")
+
         effective_thinking = args.enable_thinking or (args.reasoning_effort is not None)
         if effective_thinking:
             suffix = "_thinking"
@@ -496,7 +519,11 @@ def main():
         if args.reasoning_effort:
             suffix += f"_reasoning_{args.reasoning_effort}"
     else:  # openai
-        supports_reasoning = profile.get("reasoning_effort") is not None
+        # supports_thinking: false が明示されている場合は優先
+        if profile.get("supports_thinking") is False:
+            supports_reasoning = False
+        else:
+            supports_reasoning = profile.get("reasoning_effort") is not None
         if supports_reasoning and args.reasoning_effort:
             suffix = f"_reasoning_{args.reasoning_effort}"
         elif supports_reasoning:
