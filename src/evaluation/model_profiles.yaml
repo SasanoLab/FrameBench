@@ -106,25 +106,30 @@ models:
     supports_thinking: false
 
   # Google Gemma4シリーズ
+  # <channel|> は特殊トークンのため skip_special_tokens=False が必要
   google/gemma-4-E2B-it:
     backend: vllm
     supports_thinking: true
     thinking_stop: "<channel|>"
+    skip_special_tokens: false
     trust_remote_code: true
   google/gemma-4-E4B-it:
     backend: vllm
     supports_thinking: true
     thinking_stop: "<channel|>"
+    skip_special_tokens: false
     trust_remote_code: true
   google/gemma-4-26B-A4B-it:
     backend: vllm
     supports_thinking: true
     thinking_stop: "<channel|>"
+    skip_special_tokens: false
     trust_remote_code: true
   google/gemma-4-31B-it:
     backend: vllm
     supports_thinking: true
     thinking_stop: "<channel|>"
+    skip_special_tokens: false
     trust_remote_code: true 
 
   llm-jp/llm-jp-4-8b-thinking:

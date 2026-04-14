@@ -190,6 +190,7 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
         texts.append(text)
 
     thinking_stop = get_thinking_stop(args)
+    skip_special_tokens = profile.get("skip_special_tokens", True)
 
     if args.enable_thinking:
         t_temp, t_top_p, t_top_k = _merge_sampling("thinking", args, profile)
@@ -200,6 +201,7 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
             max_tokens=args.thinking_max_tokens,
             stop=[thinking_stop],
             include_stop_str_in_output=True,
+            skip_special_tokens=skip_special_tokens,
         )
         thinking_outputs = llm.generate(texts, thinking_params)
 
@@ -216,6 +218,7 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
             top_k=a_top_k,
             max_tokens=args.answer_max_tokens,
             structured_outputs=structured_outputs,
+            skip_special_tokens=skip_special_tokens,
         )
         answer_outputs = llm.generate(answer_prompts, answer_params)
 
@@ -232,6 +235,7 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
             top_k=s_top_k,
             max_tokens=args.max_tokens,
             structured_outputs=structured_outputs,
+            skip_special_tokens=skip_special_tokens,
         )
         vllm_outputs = llm.generate(texts, sampling_params)
         generated_texts = [output.outputs[0].text for output in vllm_outputs]
