@@ -20,6 +20,11 @@ import sys
 from pathlib import Path
 import pandas as pd
 import yaml
+from dotenv import load_dotenv
+
+# プロジェクトルートの .env を自動読み込み（存在しない場合は無視）
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 from eval_utils import (
@@ -76,6 +81,26 @@ def get_model_profile(model_name: str) -> dict:
     if any(model_name.startswith(p) for p in openai_patterns):
         print(f"警告: モデル '{model_name}' のプロファイルが未登録です。OpenAIデフォルトを使用します。")
         return {"backend": "openai", "reasoning_effort": None, "structured_outputs": True}
+    gemini_patterns = ['gemini-']
+    if any(model_name.startswith(p) for p in gemini_patterns):
+        print(f"警告: モデル '{model_name}' のプロファイルが未登録です。Geminiデフォルトを使用します。")
+        return {
+            "backend": "openai",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "api_key_env": "GOOGLE_API_KEY",
+            "reasoning_effort": None,
+            "structured_outputs": True,
+        }
+    claude_patterns = ['claude-']
+    if any(model_name.startswith(p) for p in claude_patterns):
+        print(f"警告: モデル '{model_name}' のプロファイルが未登録です。Anthropicデフォルトを使用します。")
+        return {
+            "backend": "openai",
+            "base_url": "https://api.anthropic.com/v1/",
+            "api_key_env": "ANTHROPIC_API_KEY",
+            "reasoning_effort": None,
+            "structured_outputs": False,
+        }
     print(f"警告: モデル '{model_name}' のプロファイルが未登録です。vLLMデフォルトを使用します。")
     return {"backend": "vllm", "reasoning_effort": None}
 
@@ -245,8 +270,9 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
 
 
 def run_openai_single_prompt(args, all_problems, all_messages, output_dir):
-    """OpenAI APIを使用して単一プロンプトで推論を実行"""
+    """OpenAI互換APIを使用して単一プロンプトで推論を実行"""
     import asyncio
+    import os
 
     profile = get_model_profile(args.model)
     # supports_thinking: false が明示されている場合は優先
@@ -254,9 +280,23 @@ def run_openai_single_prompt(args, all_problems, all_messages, output_dir):
         supports_reasoning = False
     else:
         supports_reasoning = profile.get("reasoning_effort") is not None
+
+    # base_url / api_key_env の解決（Gemini, Anthropic 等の OpenAI 互換 API 向け）
+    base_url = profile.get("base_url", None)
+    api_key_env = profile.get("api_key_env", "OPENAI_API_KEY")
+    api_key = os.environ.get(api_key_env)
+    if api_key is None:
+        raise EnvironmentError(
+            f"環境変数 '{api_key_env}' が設定されていません。"
+            f" モデル '{args.model}' の使用には {api_key_env} の設定が必要です。"
+        )
+
+    use_structured_outputs = profile.get("structured_outputs", True)
+
     api_params = {"model": args.model}
 
-    api_params["response_format"] = CHOICE_SCHEMA
+    if use_structured_outputs:
+        api_params["response_format"] = CHOICE_SCHEMA
 
     if supports_reasoning:
         if args.reasoning_effort:
@@ -273,12 +313,21 @@ def run_openai_single_prompt(args, all_problems, all_messages, output_dir):
     actual_params = {
         "requested": {k: v for k, v in api_params.items() if k != "response_format"},
         "model_profile": profile,
+        "base_url": base_url,
+        "api_key_env": api_key_env,
+        "api_concurrency": args.api_concurrency,
         "first_response_model": None,
     }
     
     # 非同期処理を実行
     generated_texts, first_response = asyncio.run(
-        run_openai_async(all_messages, api_params)
+        run_openai_async(
+            all_messages,
+            api_params,
+            base_url=base_url,
+            api_key=api_key,
+            concurrency=args.api_concurrency,
+        )
     )
     
     # 最初のレスポンス情報を記録
@@ -295,35 +344,49 @@ def run_openai_single_prompt(args, all_problems, all_messages, output_dir):
     return all_problems, stats
 
 
-async def run_openai_async(all_messages, api_params):
-    """OpenAI APIを非同期で並列実行"""
+async def run_openai_async(all_messages, api_params, base_url=None, api_key=None, concurrency=10):
+    """OpenAI互換APIを非同期で並列実行"""
     import asyncio
+    import os
     from openai import AsyncOpenAI
-    
-    client = AsyncOpenAI()
-    
+
+    client_kwargs = {}
+    if base_url is not None:
+        client_kwargs["base_url"] = base_url
+    if api_key is not None:
+        client_kwargs["api_key"] = api_key
+    elif "OPENAI_API_KEY" in os.environ:
+        client_kwargs["api_key"] = os.environ["OPENAI_API_KEY"]
+
+    client = AsyncOpenAI(**client_kwargs)
+    semaphore = asyncio.Semaphore(concurrency)
+
     async def process_single_message(i, messages):
         """単一のメッセージを処理"""
         try:
-            request_params = {**api_params, "messages": messages}
-            response = await client.chat.completions.create(**request_params)
+            async with semaphore:
+                request_params = {**api_params, "messages": messages}
+                response = await client.chat.completions.create(**request_params)
             generated_text = response.choices[0].message.content
             return i, generated_text, response if i == 0 else None
         except Exception as e:
             print(f"APIエラー (index {i}): {e}")
             return i, None, None
     
-    # 全てのリクエストを並列実行
-    print(f"OpenAI API推論中（並列処理）: {len(all_messages)}件")
-    tasks = [process_single_message(i, messages) for i, messages in enumerate(all_messages)]
-    results = await asyncio.gather(*tasks)
-    
-    # 結果を元の順序でソート
-    results_sorted = sorted(results, key=lambda x: x[0])
-    generated_texts = [text for _, text, _ in results_sorted]
-    first_response = results_sorted[0][2] if results_sorted else None
-    
-    return generated_texts, first_response
+    provider = base_url or "OpenAI"
+    print(f"API推論中（並列処理, provider={provider}, concurrency={concurrency}）: {len(all_messages)}件")
+    try:
+        tasks = [process_single_message(i, messages) for i, messages in enumerate(all_messages)]
+        results = await asyncio.gather(*tasks)
+        
+        # 結果を元の順序でソート
+        results_sorted = sorted(results, key=lambda x: x[0])
+        generated_texts = [text for _, text, _ in results_sorted]
+        first_response = results_sorted[0][2] if results_sorted else None
+        
+        return generated_texts, first_response
+    finally:
+        await client.close()
 
 
 def run_single_prompt_experiment(args, prompt_file, prompt_name, all_problems_original, base_output_dir, backend):
@@ -418,6 +481,8 @@ def main():
     parser.add_argument('--reasoning_effort', type=str, default=None,
                         choices=['low', 'medium', 'high', 'minimal', 'none'],
                         help='推論の深さ')
+    parser.add_argument('--api_concurrency', type=int, default=10,
+                        help='OpenAI互換APIの同時リクエスト数（デフォルト: 10）')
     
     # プロンプト関連
     parser.add_argument('--prompt_files', type=str, nargs='+', default=None,
@@ -467,6 +532,9 @@ def main():
 
     args = parser.parse_args()
 
+    if args.api_concurrency < 1:
+        parser.error('--api_concurrency は1以上を指定してください')
+
     # カスタムプロファイルファイルが指定された場合は再読み込み
     if args.model_profile_file:
         global _PROFILES, _VLLM_DEFAULTS, _MODEL_PROFILES
@@ -513,7 +581,7 @@ def main():
         # thinking が有効かつ reasoning_effort 対応モデルなら medium をデフォルトに設定
         if args.enable_thinking and vllm_supports_reasoning and not args.reasoning_effort:
             args.reasoning_effort = "medium"
-            print(f"ℹ️  reasoning_effort が未指定のため、デフォルト値 'medium' を使用します。")
+            print("ℹ️  reasoning_effort が未指定のため、デフォルト値 'medium' を使用します。")
 
         effective_thinking = args.enable_thinking or (args.reasoning_effort is not None)
         if effective_thinking:
