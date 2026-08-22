@@ -79,11 +79,11 @@ CHOICE_SCHEMA = {
 }
 
 
-def make_choice_structured_outputs(profile: dict):
+def make_choice_structured_outputs(use_json: bool = False):
     """vLLM 用 structured output パラメータ（Closed Model 同等の JSON または choice 制約）"""
     from vllm.sampling_params import StructuredOutputsParams
 
-    if profile.get("thinking_answer_format") == "json":
+    if use_json:
         return StructuredOutputsParams(
             json=CHOICE_VLLM_JSON_SCHEMA,
             disable_additional_properties=True,
@@ -142,12 +142,26 @@ def get_thinking_stop(args) -> str:
     return _VLLM_DEFAULTS.get("thinking_stop", "</think>")
 
 
-def get_json_single_max_tokens(profile: dict, args) -> int:
+THINKING_GENERATION_MODES = ("two_phase", "single_json")
+
+
+def get_thinking_generation_mode(profile: dict) -> str:
+    """thinking時の生成方式（省略時は思考フェーズと回答フェーズの2回生成）"""
+    mode = profile.get("thinking_generation_mode", "two_phase")
+    if mode not in THINKING_GENERATION_MODES:
+        raise ValueError(
+            f"thinking_generation_mode '{mode}' は未対応です。"
+            f" 指定可能な値: {', '.join(THINKING_GENERATION_MODES)}"
+        )
+    return mode
+
+
+def get_single_json_max_tokens(profile: dict, args) -> int:
     """JSON 単発生成の max_tokens（YAMLモデル > vllm_defaults > 8192）"""
-    if "json_single_max_tokens" in profile:
-        base = profile["json_single_max_tokens"]
+    if "single_json_max_tokens" in profile:
+        base = profile["single_json_max_tokens"]
     else:
-        base = _VLLM_DEFAULTS.get("json_single_max_tokens", 8192)
+        base = _VLLM_DEFAULTS.get("single_json_max_tokens", 8192)
     return max(base, args.answer_max_tokens, 32)
 
 
@@ -337,12 +351,11 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
 
     tokenizer = llm.get_tokenizer()
 
-    json_single_call = (
+    single_json_call = (
         args.enable_thinking
-        and profile.get("thinking_answer_format") == "json"
-        and profile.get("thinking_harmony") is False
+        and get_thinking_generation_mode(profile) == "single_json"
     )
-    harmony_two_phase = args.enable_thinking and not json_single_call
+    harmony_two_phase = args.enable_thinking and not single_json_call
 
     texts = []
     profile_chat_template = profile.get("chat_template")
@@ -367,15 +380,15 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
     thinking_stop = get_thinking_stop(args)
     skip_special_tokens = profile.get("skip_special_tokens", True)
 
-    if json_single_call:
+    if single_json_call:
         s_temp, s_top_p, s_top_k = _merge_sampling("sampling", args, profile)
-        json_max_tokens = get_json_single_max_tokens(profile, args)
+        json_max_tokens = get_single_json_max_tokens(profile, args)
         sampling_params = SamplingParams(
             temperature=s_temp,
             top_p=s_top_p,
             top_k=s_top_k,
             max_tokens=json_max_tokens,
-            structured_outputs=make_choice_structured_outputs(profile),
+            structured_outputs=make_choice_structured_outputs(use_json=True),
             skip_special_tokens=skip_special_tokens,
         )
         vllm_outputs = llm.generate(texts, sampling_params)
@@ -400,15 +413,12 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
         ]
 
         a_temp, a_top_p, a_top_k = _merge_sampling("answer", args, profile)
-        answer_max_tokens = args.answer_max_tokens
-        if profile.get("thinking_answer_format") == "json":
-            answer_max_tokens = max(answer_max_tokens, 32)
         answer_params = SamplingParams(
             temperature=a_temp,
             top_p=a_top_p,
             top_k=a_top_k,
-            max_tokens=answer_max_tokens,
-            structured_outputs=make_choice_structured_outputs(profile),
+            max_tokens=args.answer_max_tokens,
+            structured_outputs=make_choice_structured_outputs(),
             skip_special_tokens=skip_special_tokens,
         )
         answer_outputs = llm.generate(answer_prompts, answer_params)
@@ -419,7 +429,7 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
         ]
     else:
         s_temp, s_top_p, s_top_k = _merge_sampling("sampling", args, profile)
-        structured_outputs = make_choice_structured_outputs(profile)
+        structured_outputs = make_choice_structured_outputs()
         sampling_params = SamplingParams(
             temperature=s_temp,
             top_p=s_top_p,
