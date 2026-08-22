@@ -62,3 +62,16 @@ models:
       model: gpt-4.1-mini-2025-04-14
       temperature: 0.7
       max_output_tokens: 4000
+
+  gemini-3.1-pro-preview:
+    provider: openai
+    class: ChatOpenAI
+    api_type: chat_completions
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+    api_key_env: "GOOGLE_API_KEY"
+    reasoning: medium
+    concurrency: 1
+    default_params:
+      model: gemini-3.1-pro-preview
+      temperature: 1.0
+      reasoning_effort: medium

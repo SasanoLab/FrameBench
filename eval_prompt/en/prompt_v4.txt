@@ -1,0 +1,10 @@
+Your task is to compare the two sentences through the usage of "{verb}".
+{four_choice_question}
+
+Sentence A → {statement_a}
+Sentence B → {statement_b}
+
+Available choices:
+{choices_text}
+
+Output strictly one number (1-4). No explanation.

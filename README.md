@@ -136,15 +136,15 @@ bash scripts/run_eval.sh gpt-5-nano
 ```bash
 uv run python src/evaluation/eval_multi_prompts.py \
     --model gpt-4o \
-    --dataset cl-nagoya/jFrameBench \
+    --language ja \
     --num 100 \
-    --prompt_files eval_prompt/prompt_v1.txt
+    --prompt_files eval_prompt/ja/prompt_v1.txt
 ```
 **主要オプション:**
 - `--model`: 評価に使用するLLM
-- `--dataset`: 評価対象のデータセット（自分で構築したものを利用する場合はjsonlファイルへのパスを指定）
+- `--dataset`: 評価対象のデータセット（未指定時は`--language ja`で`cl-nagoya/jFrameBench`、`--language en`で`cl-nagoya/FrameBench`を使用。自分で構築したものを利用する場合はjsonlファイルへのパスを指定）
 - `--num`: 評価する問題数（指定しない場合は全問）
-- `--prompt_files`: 使用するプロンプトファイル（複数指定可、指定しない場合は`eval_prompt/`内の全ファイルを使用）
+- `--prompt_files`: 使用するプロンプトファイル（複数指定可、指定しない場合は`eval_prompt/<language>/`内の全ファイルを使用）
 - `--output_dir`: 出力ディレクトリのベースパス（デフォルト: `output`）
 - `--language`: 評価対象言語（デフォルト: `ja`）
 
@@ -193,11 +193,12 @@ framebench/
 │   ├── step3.sh                  # Step 3実行
 │   └── run_eval.sh               # 評価実行
 ├── eval_prompt/                  # 評価用プロンプト
-│   ├── prompt_v1.txt
-│   ├── prompt_v2.txt
-│   ├── prompt_v3.txt
-│   ├── prompt_v4.txt
-│   └── prompt_v5.txt
+│   ├── ja/
+│   │   ├── prompt_v1.txt
+│   │   └── ...
+│   └── en/
+│       ├── prompt_v1.txt
+│       └── ...
 ├── data/                         # データディレクトリ
 │   ├── <language>-framenet/      # フレームデータ
 │   │   └── raw_frame/            # 生FrameNet XMLファイル

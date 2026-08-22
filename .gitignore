@@ -9,6 +9,8 @@ src/postpocess
 .venv/
 *.lock
 temp/
+exp_script/
+exp_eval_prompt/
 
 .env
 .DS_Store
@@ -28,3 +30,4 @@ __pycache__/
 *.json.bz2
 *.out
 *.txt
+!eval_prompt/**/*.txt

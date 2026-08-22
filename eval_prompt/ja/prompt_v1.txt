@@ -1,0 +1,10 @@
+{four_choice_question}
+
+文A: {statement_a}
+
+文B: {statement_b}
+
+選択肢: {choices_text}
+
+回答する際は、文の最後の動詞に注目して判断してください。
+回答は選択肢の番号「1」、「2」、「3」、「4」のいずれかで答えてください。

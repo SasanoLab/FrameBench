@@ -1,0 +1,8 @@
+選択肢の番号で回答してください。
+{four_choice_question}
+
+文A: {statement_a}
+
+文B: {statement_b}
+
+選択肢: {choices_text}

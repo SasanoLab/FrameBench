@@ -53,13 +53,14 @@ class AdditionalChoiceGenerator:
     """追加の選択肢を持つ問題を生成するクラス"""
     
     def __init__(self, model_name: str = "gpt-4o-mini", language: str = 'ja', 
-                 prompt_file: str = "prompts/gen_other_choice_ja.toml", seed: int = 42):
+                 prompt_file: str | None = None, seed: int = 42):
         self.model_name = model_name
         self.language = language
         self.seed = seed
         self.frame_data = {}
 
-        
+        if prompt_file is None:
+            prompt_file = f"prompts/gen_other_choice_{language}.toml"
         self.prompt_template = self._load_prompt(prompt_file)
         
         # ランダムシードの設定
@@ -126,7 +127,10 @@ class AdditionalChoiceGenerator:
     def _format_frame_definition(self, frame_name: str, verb: str) -> str:
         """フレーム定義をフォーマット"""
         if frame_name not in self.frame_data:
-            return f"フレーム名: {frame_name}\n定義: （定義が見つかりません）"
+            if self.language == "ja":
+                return f"フレーム名: {frame_name}\n定義: （定義が見つかりません）"
+            elif self.language == "en":
+                return f"Frame Name: {frame_name}\nDefinition: (Definition not found)"
         
         frame = self.frame_data[frame_name]
         definition = frame.get('definition', '定義なし')
@@ -136,9 +140,15 @@ class AdditionalChoiceGenerator:
         core_fes = frame.get('core_frame_elements', [])
         if core_fes:
             fes_str = "\n".join([f"  - {fe['name']}: {fe['definition']}" for fe in core_fes[:3]])  # 最大3つまで
-            return f"フレーム名: {frame_name}\n定義: {definition}\nコアフレーム要素:\n{fes_str}\n例文:\n{examples}"
+            if self.language == "ja":
+                return f"フレーム名: {frame_name}\n定義: {definition}\nコアフレーム要素:\n{fes_str}\n例文:\n{examples}"
+            elif self.language == "en":
+                return f"Frame Name: {frame_name}\nDefinition: {definition}\nCore Frame Elements:\n{fes_str}\nExamples:\n{examples}"
         else:
-            return f"フレーム名: {frame_name}\n定義: {definition}\n例文:\n{examples}"
+            if self.language == "ja":
+                return f"フレーム名: {frame_name}\n定義: {definition}\n例文:\n{examples}"
+            elif self.language == "en":
+                return f"Frame Name: {frame_name}\nDefinition: {definition}\nExamples:\n{examples}"
     
     def _extract_question_without_sentences(self, full_question: str) -> str:
         """質問から文を除いた質問部分のみを抽出"""
@@ -186,16 +196,27 @@ class AdditionalChoiceGenerator:
             
             # プロンプトをレンダリング
             template = Template(self.prompt_template)
-            rendered_prompt = template.render(
-                single_question=single_question,
-                verb=verb,
-                definitions_a=frame_definition,
-                sentence=target_sentence,
-                frame_a=target_frame_name,
-                answer_ja=answer_instruction,
-                Answer=target_answer,
-                answer_choice=target_answer
-            )
+            if self.language == "ja":
+                rendered_prompt = template.render(
+                    single_question=single_question,
+                    verb=verb,
+                    definitions_a=frame_definition,
+                    sentence=target_sentence,
+                    frame_a=target_frame_name,
+                    answer_ja=answer_instruction,
+                    Answer=target_answer,
+                    answer_choice=target_answer
+                )
+            elif self.language == "en":
+                rendered_prompt = template.render(
+                    single_question=single_question,
+                    verb=verb,
+                    definitions_a=frame_definition,
+                    sentence=target_sentence,
+                    frame_a=target_frame_name,
+                    Answer=target_answer,
+                    answer_choice=target_answer
+                )
             
             messages = [{"role": "user", "content": rendered_prompt}]
             
@@ -262,9 +283,9 @@ class AdditionalChoiceGenerator:
                     f.write(f"Pair {i+1}/{len(prompt_pairs)}\n")
                     f.write("=" * 60 + "\n")
                     f.write("\n--- Both sentences prompt ---\n")
-                    f.write(pair['both_prompt'])
+                    f.write(pair['both_prompt'][0]['content'])
                     f.write("\n\n--- Neither sentence prompt ---\n")
-                    f.write(pair['neither_prompt'])
+                    f.write(pair['neither_prompt'][0]['content'])
                     f.write("\n\n")
             print(f"プロンプトペアを保存: {prompts_file}")
         
@@ -292,6 +313,7 @@ class AdditionalChoiceGenerator:
                 results = generate_batch(
                     prompts=batch_prompts,
                     model_name=self.model_name,
+                    output_dir=str(output_dir / f"batch_{batch_start // batch_size + 1}") if output_dir else None,
                     seed=self.seed
                 )
                 
@@ -581,6 +603,8 @@ def main():
                        help='入力QAファイルのパス')
     parser.add_argument('--output_dir', type=str, required=True,
                        help='出力ディレクトリ')
+    parser.add_argument('--data_root', type=str, default='data',
+                       help='フレーム定義データのルートディレクトリ')
     parser.add_argument('--model', type=str, default='gpt-4o-mini',
                        help='使用するLLMモデル')
     parser.add_argument('--language', type=str, default='ja',
@@ -607,7 +631,11 @@ def main():
     )
     
     # フレーム定義を読み込み
-    generator.load_frame_definitions()
+    data_root = Path(args.data_root)
+    generator.load_frame_definitions(
+        frames_path=str(data_root / f"{args.language}-framenet" / "frames.jsonl"),
+        exemplars_path=str(data_root / f"{args.language}-framenet" / "exemplars.jsonl"),
+    )
     
     # QAデータを読み込み
     qa_data = generator.load_qa_data(args.qa_file)

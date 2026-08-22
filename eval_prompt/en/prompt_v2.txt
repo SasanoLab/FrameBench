@@ -1,0 +1,11 @@
+Please make your decision by focusing on the verb "{verb}".
+
+{four_choice_question}
+
+Sentence A: {statement_a}
+
+Sentence B: {statement_b}
+
+Choices: {choices_text}
+
+Respond using only the choice number: "1", "2", "3", or "4".
