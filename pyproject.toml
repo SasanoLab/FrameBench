@@ -15,6 +15,7 @@ dependencies = [
     "pyyaml>=6.0.2",
     "datasets>=4.5.0",
     "transformers>=4.57.3",
+    "scipy>=1.17.1",
 ]
 
 [project.optional-dependencies]
@@ -26,7 +27,7 @@ generation = [
 ]
 # vLLMを使用する場合（ローカルLLM評価用）
 vllm = [
-    "vllm>=0.19.0",
+    "vllm>=0.19.0,<0.21",
     "transformers>=4.57.3",
 ]
 # 開発・可視化ツール
@@ -44,7 +45,7 @@ all = [
     "numpy>=1.26.0",
     "jinja2>=3.1.0",
     "nltk>=3.9.1",
-    "vllm>=0.19.0",
+    "vllm==0.19.1",
     "transformers>=4.57.3",
     "ipykernel>=6.29.5",
     "matplotlib>=3.10.3",

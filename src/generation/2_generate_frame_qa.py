@@ -268,7 +268,15 @@ class FrameQAPipeline:
         logger.info(f"総プロンプト数: {len(prompts)}")
         
         # generate_batchを使用
-        results = generate_batch(self.model, prompts, output_dir=self.output_dir, temperature=1.0, max_tokens=self.max_tokens)
+        results = generate_batch(
+            self.model,
+            prompts,
+            output_dir=self.output_dir,
+            temperature=1.0,
+            max_tokens=self.max_tokens,
+            max_completion_tokens=self.max_tokens,
+            max_output_tokens=self.max_tokens,
+        )
         data['generated_response'] = results
         data.to_json(f"{self.output_dir}/intermediate_result.jsonl", orient="records", lines=True, force_ascii=False)
         logger.info(f"{self.output_dir}/intermediate_result.jsonl に経過を保存しました")
@@ -277,6 +285,7 @@ class FrameQAPipeline:
         removed_duplicate_count = 0
         json_parse_error_count = 0
         no_result_count = 0
+        answer_not_supported_count = 0
         for df_dict in data.to_dict(orient="records"):
             result = df_dict['generated_response']
             # 結果を処理
@@ -290,9 +299,24 @@ class FrameQAPipeline:
             if not isinstance(result, list):
                 result = [result]
             for result_item in result:
-                frame_a, frame_b = list(result_item.get('sentence_pair', {}).keys())
-                sentence_a = result_item.get('sentence_pair', {}).get(frame_a, '').replace("Sentence 1: ", "")
-                sentence_b = result_item.get('sentence_pair', {}).get(frame_b, '').replace("Sentence 2: ", "")
+                frame_1, frame_2 = list(result_item.get('sentence_pair', {}).keys())
+                sentence_1 = result_item.get('sentence_pair', {}).get(frame_1, '').replace("Sentence 1: ", "")
+                sentence_2 = result_item.get('sentence_pair', {}).get(frame_2, '').replace("Sentence 2: ", "")
+                answer = str(result_item['qa']['answer']).strip()
+                if answer in {'Sentence 1', sentence_1.strip()}:
+                    sentence_a = sentence_1
+                    sentence_b = sentence_2
+                    frame_a = frame_1
+                    frame_b = frame_2
+                elif answer in {'Sentence 2', sentence_2.strip()}:
+                    sentence_a = sentence_2
+                    sentence_b = sentence_1
+                    frame_a = frame_2
+                    frame_b = frame_1
+                else:
+                    print(f"answer: {answer} is not supported")
+                    answer_not_supported_count += 1
+                    continue
                 if sentence_a.strip() == sentence_b.strip():
                     removed_duplicate_count += 1
                     continue
@@ -303,6 +327,7 @@ class FrameQAPipeline:
                 result_item.update({'sentence_A': sentence_a})
                 result_item.update({'sentence_B': sentence_b})
                 output_data.append(result_item)
+        logger.info(f"answerがサポートされていない: {answer_not_supported_count}件")
         logger.info(f"JSONパースエラー: {json_parse_error_count}件")
         logger.info(f"結果がない: {no_result_count}件")
         logger.info(f"全くおなじ文をペアにしてしまっている{removed_duplicate_count}件")
@@ -369,6 +394,33 @@ class FrameQAPipeline:
         df['two-choice-question'] = two_choice_questions
         return df
 
+    def _add_question_format_for_en(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        questionから、question、single-question、"two-choice-question、"four-choice-question"に幅出し
+        """
+        single_questions = []
+        two_choice_questions = []
+        four_choice_questions = []
+        for qa in df['qa'].to_list():
+            question = qa['question']
+            if question.startswith("Which sentence implies that"):
+                single_question = question.replace('Which sentence implies that','Does this sentence imply that')
+                two_choice_question = question
+                temp = question.replace('Which sentence implies that','Select all sentences where')
+                four_choice_question = '.'.join(temp.rsplit('?', 1))
+            else:
+                logger.warning(f"{question}は対応していない問題形式です")
+                single_question = None
+                two_choice_question = None
+                four_choice_question = None
+            single_questions.append(single_question)
+            two_choice_questions.append(two_choice_question)
+            four_choice_questions.append(four_choice_question)
+        df["single-question"] = single_questions
+        df['four-choice-question'] = four_choice_questions
+        df['two-choice-question'] = two_choice_questions
+        return df
+
     def _format_qa(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         original_qa_idの付与とresultの整形、問題形式の幅出し（ルールベース）
@@ -385,8 +437,10 @@ class FrameQAPipeline:
             df = pd.DataFrame(df[df['single-question'].notna()])
             logger.info(f"問題形式の幅出し後: {len(df)}件のデータ")
         elif self.language == "en":
-            # TODO: Englishの問題形式の幅出し
-            raise ValueError("English is not supported yet")
+            df = self._add_question_format_for_en(df)
+            # single-questionがNoneでないものだけをフィルタリング
+            df = pd.DataFrame(df[df['single-question'].notna()])
+            logger.info(f"問題形式の幅出し後: {len(df)}件のデータ")
         
         # 必要な列のみを選択
         columns_to_select = ['original_qa_id', 'lex_unit_name', 'single-question', 'four-choice-question', 'two-choice-question', 'sentence_A', 'sentence_B', 'frame_A', 'frame_B','sentence_pair']
@@ -412,8 +466,10 @@ class FrameQAPipeline:
         frame_pairs = self.choice_all_frame_pairs(lexical_units)
         logger.info(f"フレームペア数: {len(frame_pairs)}")
         frame_pairs = self.concat_info(frame_pairs, frames,frame_examples)
+        # seedでシャッフルしてから先頭num件を取得
         if num is not None and num > 0 and num < frame_pairs.shape[0]:
-            frame_pairs = frame_pairs.sample(num, random_state=self.seed)
+            frame_pairs = frame_pairs.sample(frac=1.0, random_state=self.seed).reset_index(drop=True).head(num)
+            logger.info(f"シャッフル後、先頭{num}件を使用します")
 
         # 3. 文ペアとQAの生成 中間状態を保存
         qa_data = self.generate_sentence_pairs_and_qa(frame_pairs, num_pairs)

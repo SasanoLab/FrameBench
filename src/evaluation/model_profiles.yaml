@@ -11,8 +11,16 @@
 #                例: "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"
 #   reasoning_effort: リスト形式で対応するreasoning_effortレベルを指定（thinking対応モデル）
 #   supports_thinking: false - thinkingに対応していない場合は明示的に指定
+#   supports_multimodal: true - 画像などのマルチモーダル入力に対応する場合は明示
 #   thinking_stop: thinkingモードの停止文字列（vLLMのみ、デフォルト: "</think>"）
+#   thinking_generation_mode: thinking時の生成方式（省略時: two_phase）
+#     two_phase   - 思考フェーズを制約なしで生成し、回答フェーズだけ 1/2/3/4 に制約
+#     single_json - 1回の生成で思考から {"answer":"N"} JSON まで出力（Harmony系で2フェーズが不安定な場合）
+#   no_thinking_generation_prefill: 通常生成時だけチャットテンプレート末尾へ補う文字列（vLLMのみ）
+#   single_json_max_tokens: 12288 - single_json 時の max_tokens（モデル別上書き可、省略時は vllm_defaults）
 #   trust_remote_code: true - カスタムモデルコードを使用する場合に必要（vLLMのみ）
+#   chat_template: tokenizer.chat_template が無いモデルへ渡すJinjaテンプレート（vLLMのみ）
+#   message_content_format: "multimodal_list" - content が list[{"type":"text"}] のチャットテンプレート向け
 #   structured_outputs: true/false - 構造化出力（JSON schema）をサポートするか（OpenAI互換APIのみ）
 #                       false の場合はテキスト出力から選択肢をパースする
 
@@ -20,16 +28,24 @@
 vllm_defaults:
   # thinkタグの終了文字列（生成のstopとレスポンス解析の両方に使われる）
   thinking_stop: "</think>"
-  # thinkingモード（thinking + 回答フェーズ共通）のサンプリング設定
+  # thinkingモードの思考フェーズのサンプリング設定
   thinking_sampling:
     temperature: 0.6
     top_p: 0.95
     top_k: 20
+  # thinkingモードの回答フェーズのサンプリング設定
+  # choice制約の候補数字をtop_k/top_pで落とさないよう、デフォルトでは貪欲に選ぶ
+  answer_sampling:
+    temperature: 0.0
+    top_p: 1.0
+    top_k: -1
   # 通常モード（thinking無効）のサンプリング設定
   sampling:
     temperature: 0.7
     top_p: 0.8
     top_k: 20
+  # thinking_generation_mode: single_json の max_tokens（思考 + 最終JSON）
+  single_json_max_tokens: 12288  # 20b / Swallow 等の既定。120b はモデル別に上書き
 
 # モデル別プロファイル
 models:
@@ -40,16 +56,19 @@ models:
   gpt-5.1:
     backend: openai
     reasoning_effort: [none, minimal, low, medium, high]
+    supports_multimodal: true
     structured_outputs: true
 
   gpt-5:
     backend: openai
     reasoning_effort: [minimal, low, medium, high]
+    supports_multimodal: true
     structured_outputs: true
 
   gpt-5-nano:
     backend: openai
     reasoning_effort: [minimal, low, medium, high]
+    supports_multimodal: true
     structured_outputs: true
 
   # ===== Google Gemini =====
@@ -62,6 +81,7 @@ models:
     base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
     api_key_env: "GOOGLE_API_KEY"
     reasoning_effort: [low, medium, high]
+    supports_multimodal: true
     structured_outputs: true
 
   gemini-3-flash-preview:
@@ -69,6 +89,7 @@ models:
     base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
     api_key_env: "GOOGLE_API_KEY"
     reasoning_effort: [low, medium, high]
+    supports_multimodal: true
     structured_outputs: true
 
   gemini-3.1-flash-lite-preview:
@@ -76,53 +97,194 @@ models:
     base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
     api_key_env: "GOOGLE_API_KEY"
     reasoning_effort: [low, medium, high]
+    supports_multimodal: true
     structured_outputs: true
 
   # ===== vLLM =====
 
+  # EleutherAI Pythiaシリーズ（ベースLM）
+  EleutherAI/pythia-:
+    backend: vllm
+    supports_thinking: false
+
+  # LLM360シリーズ（ベースLM）
+  LLM360/Amber:
+    backend: vllm
+    supports_thinking: false
+  LLM360/Crystal:
+    backend: vllm
+    supports_thinking: false
+  LLM360/K2:
+    backend: vllm
+    supports_thinking: false
+
   openai/gpt-oss-20b:
     backend: vllm
+    supports_thinking: true
     reasoning_effort: [low, medium, high]
-    thinking_stop: "assistantfinal"
+    thinking_generation_mode: single_json
+    single_json_max_tokens: 16384
+    skip_special_tokens: true
+    trust_remote_code: true
   openai/gpt-oss-120b:
     backend: vllm
+    supports_thinking: true
     reasoning_effort: [low, medium, high]
-    thinking_stop: "assistantfinal"
+    thinking_generation_mode: single_json
+    single_json_max_tokens: 20480
+    skip_special_tokens: true
+    trust_remote_code: true
 
   # Qwen3シリーズ
   Qwen/Qwen3-0.6B:
     backend: vllm
     supports_thinking: true
+    thinking_stop: "</think>\n\n"
   Qwen/Qwen3-1.7B:
     backend: vllm
     supports_thinking: true
+    thinking_stop: "</think>\n\n"
   Qwen/Qwen3-4B:
     backend: vllm
     supports_thinking: true
+    thinking_stop: "</think>\n\n"
+  Qwen/Qwen3-8B:
+    backend: vllm
+    supports_thinking: true
+    thinking_stop: "</think>\n\n"
   Qwen/Qwen3-32B:
     backend: vllm
     supports_thinking: true
+    thinking_stop: "</think>\n\n"
+
+  # Qwen3-VLシリーズ
+  Qwen/Qwen3-VL-2B-Instruct:
+    backend: vllm
+    supports_thinking: false
+    supports_multimodal: true
+  Qwen/Qwen3-VL-4B-Instruct:
+    backend: vllm
+    supports_thinking: false
+    supports_multimodal: true
+  Qwen/Qwen3-VL-8B-Instruct:
+    backend: vllm
+    supports_thinking: false
+    supports_multimodal: true
+  Qwen/Qwen3-VL-32B-Instruct:
+    backend: vllm
+    supports_thinking: false
+    supports_multimodal: true
+  Qwen/Qwen3-VL-2B-Thinking:
+    backend: vllm
+    supports_thinking: true
+    supports_multimodal: true
+    thinking_stop: "</think>\n\n"
+  Qwen/Qwen3-VL-4B-Thinking:
+    backend: vllm
+    supports_thinking: true
+    supports_multimodal: true
+    thinking_stop: "</think>\n\n"
+  Qwen/Qwen3-VL-8B-Thinking:
+    backend: vllm
+    supports_thinking: true
+    supports_multimodal: true
+    thinking_stop: "</think>\n\n"
+  Qwen/Qwen3-VL-32B-Thinking:
+    backend: vllm
+    supports_thinking: true
+    supports_multimodal: true
+    thinking_stop: "</think>\n\n"
+
+  # Qwen2.5 text / VL 比較用
+  Qwen/Qwen2.5-3B-Instruct:
+    backend: vllm
+    supports_thinking: false
+  Qwen/Qwen2.5-VL-3B-Instruct:
+    backend: vllm
+    supports_thinking: false
+    supports_multimodal: true
+  Qwen/Qwen2.5-7B-Instruct:
+    backend: vllm
+    supports_thinking: false
+  Qwen/Qwen2.5-VL-7B-Instruct:
+    backend: vllm
+    supports_thinking: false
+    supports_multimodal: true
+  Qwen/Qwen2.5-72B-Instruct:
+    backend: vllm
+    supports_thinking: false
+  Qwen/Qwen2.5-VL-72B-Instruct:
+    backend: vllm
+    supports_thinking: false
+    supports_multimodal: true
+
+  # Vicuna / LLaVA v1.5 比較用
+  lmsys/vicuna-7b-v1.5:
+    backend: vllm
+    supports_thinking: false
+    chat_template: &vicuna_v1_5_chat_template >-
+      A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
+      {% for message in messages %}{% if message['role'] == 'user' %}USER: {{ message['content'] }} {% elif message['role'] == 'assistant' %}ASSISTANT: {{ message['content'] }}{% endif %}{% endfor %}{% if add_generation_prompt %}ASSISTANT:{% endif %}
+  llava-hf/llava-1.5-7b-hf:
+    backend: vllm
+    supports_thinking: false
+    supports_multimodal: true
+    message_content_format: multimodal_list
+    chat_template: &llava_v1_5_chat_template >-
+      {% for message in messages %}{% if message['role'] != 'system' %}{{ message['role'].upper() + ': '}}{% endif %}{% for content in message['content'] | selectattr('type', 'equalto', 'image') %}{{ '<image>\n' }}{% endfor %}{% if message['role'] != 'assistant' %}{% for content in message['content'] | selectattr('type', 'equalto', 'text') %}{{ content['text'] + ' '}}{% endfor %}{% else %}{% for content in message['content'] | selectattr('type', 'equalto', 'text') %}{% generation %}{{ content['text'] + ' '}}{% endgeneration %}{% endfor %}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ 'ASSISTANT:' }}{% endif %}
+  lmsys/vicuna-13b-v1.5:
+    backend: vllm
+    supports_thinking: false
+    chat_template: *vicuna_v1_5_chat_template
+  llava-hf/llava-1.5-13b-hf:
+    backend: vllm
+    supports_thinking: false
+    supports_multimodal: true
+    message_content_format: multimodal_list
+    chat_template: *llava_v1_5_chat_template
+
+  # InternVL2 / Llama 3 text backbone 比較用
+  NousResearch/Hermes-2-Theta-Llama-3-70B:
+    backend: vllm
+    supports_thinking: false
+  OpenGVLab/InternVL2-Llama3-76B:
+    backend: vllm
+    supports_thinking: false
+    supports_multimodal: true
+    trust_remote_code: true
 
   # Qwen3.5シリーズ 
   #TODO: --language-model-onlyオプションを付けたほうがいいかも
   Qwen/Qwen3.5-0.8B:
     backend: vllm
     supports_thinking: true
+    supports_multimodal: true
+    thinking_stop: "</think>\n\n"
   Qwen/Qwen3.5-2B:
     backend: vllm
     supports_thinking: true
+    supports_multimodal: true
+    thinking_stop: "</think>\n\n"
   Qwen/Qwen3.5-4B:
     backend: vllm
     supports_thinking: true
+    supports_multimodal: true
+    thinking_stop: "</think>\n\n"
   Qwen/Qwen3.5-9B:
     backend: vllm
     supports_thinking: true
+    supports_multimodal: true
+    thinking_stop: "</think>\n\n"
   Qwen/Qwen3.5-27B:
     backend: vllm
     supports_thinking: true
+    supports_multimodal: true
+    thinking_stop: "</think>\n\n"
   Qwen/Qwen3.5-35B-A3B:
     backend: vllm
     supports_thinking: true
+    supports_multimodal: true
+    thinking_stop: "</think>\n\n"
 
   # Google Gemma3シリーズ
   google/gemma-3-1b-it:
@@ -143,46 +305,108 @@ models:
   google/gemma-4-E2B-it:
     backend: vllm
     supports_thinking: true
+    supports_multimodal: true
     thinking_stop: "<channel|>"
     skip_special_tokens: false
     trust_remote_code: true
   google/gemma-4-E4B-it:
     backend: vllm
     supports_thinking: true
+    supports_multimodal: true
     thinking_stop: "<channel|>"
     skip_special_tokens: false
     trust_remote_code: true
   google/gemma-4-26B-A4B-it:
     backend: vllm
     supports_thinking: true
+    supports_multimodal: true
     thinking_stop: "<channel|>"
     skip_special_tokens: false
     trust_remote_code: true
   google/gemma-4-31B-it:
     backend: vllm
     supports_thinking: true
+    supports_multimodal: true
     thinking_stop: "<channel|>"
     skip_special_tokens: false
     trust_remote_code: true 
 
+  # microsoft/phi-4シリーズ
+  microsoft/Phi-3.5-mini-instruct:
+    backend: vllm
+    supports_thinking: false
+    trust_remote_code: true
+  microsoft/Phi-3.5-vision-instruct:
+    backend: vllm
+    supports_thinking: false
+    supports_multimodal: true
+    trust_remote_code: true
+  microsoft/phi-4:
+    backend: vllm
+    supports_thinking: false
+    skip_special_tokens: false
+    trust_remote_code: true
+  microsoft/phi-4-14b:
+    backend: vllm
+    supports_thinking: false
+    skip_special_tokens: false
+    trust_remote_code: true
+  microsoft/Phi-4-mini-instruct:
+    backend: vllm
+    supports_thinking: false
+    skip_special_tokens: false
+    trust_remote_code: true
+  microsoft/Phi-4-multimodal-instruct:
+    backend: vllm
+    supports_thinking: false
+    supports_multimodal: true
+    skip_special_tokens: false
+    trust_remote_code: true
+  microsoft/Phi-4-reasoning:
+    backend: vllm
+    supports_thinking: true
+    thinking_stop: "</think>"
+    skip_special_tokens: false
+    trust_remote_code: true
+
+  # llm-jpシリーズ
   llm-jp/llm-jp-4-8b-thinking:
     backend: vllm
     supports_thinking: true
     reasoning_effort: [low, medium, high]
     thinking_stop: " assistant final "
     trust_remote_code: true
-  llm-jp/llm-jp-4-32b-a3bthinking:
+  llm-jp/llm-jp-4-8b-instruct:
+    backend: vllm
+    supports_thinking: false
+    supports_multimodal: false
+    no_thinking_generation_prefill: "<|channel|>final<|message|>"
+    trust_remote_code: true
+  llm-jp/llm-jp-3.1-13b:
+    backend: vllm
+    supports_thinking: false
+    supports_multimodal: false
+    trust_remote_code: true
+  llm-jp/llm-jp-4-32b-a3b-thinking:
     backend: vllm
     supports_thinking: true
     reasoning_effort: [low, medium, high]
     thinking_stop: " assistant final "
     trust_remote_code: true
 
+  # tokyotech-llmシリーズ
   tokyotech-llm/Qwen3-Swallow-8B-RL-v0.2:
     backend: vllm
     supports_thinking: true
-    thinking_stop: "</think>"
+    thinking_stop: "</think>\n\n"
   tokyotech-llm/Qwen3-Swallow-32B-RL-v0.2:
     backend: vllm
     supports_thinking: true
-    thinking_stop: "</think>"
+    thinking_stop: "</think>\n\n"
+  tokyotech-llm/GPT-OSS-Swallow-20B-RL-v0.1:
+    backend: vllm
+    supports_thinking: true
+    reasoning_effort: [low, medium, high]
+    thinking_generation_mode: single_json
+    skip_special_tokens: true
+    trust_remote_code: true

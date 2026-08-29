@@ -4,14 +4,17 @@
 """
 複数のプロンプトで四択問題を評価し、結果を集計するスクリプト
 使用例:
-  # eval_promptフォルダ内の全プロンプトで実験
+  # eval_prompt/jaフォルダ内の全プロンプトで実験
   uv run python src/evaluation/eval_multi_prompts.py --model gpt-4o --dataset data/ja/gpt5/qa.jsonl
   
   # HuggingFace Datasetから読み込む場合
-  uv run python src/evaluation/eval_multi_prompts.py --model gpt-4o --dataset cl-nagoya/jFrameBench
+  uv run python src/evaluation/eval_multi_prompts.py --model gpt-4o --language ja
   
   # 特定のプロンプトファイルと問題数を指定
-  uv run python src/evaluation/eval_multi_prompts.py --model gpt-4o --num 100 --prompt_files eval_prompt/prompt_v1.txt eval_prompt/prompt_v2.txt --dataset cl-nagoya/jFrameBench
+  uv run python src/evaluation/eval_multi_prompts.py --model gpt-4o --num 100 --prompt_files eval_prompt/ja/prompt_v1.txt eval_prompt/ja/prompt_v2.txt --dataset cl-nagoya/jFrameBench
+
+  # 文A/文Bを入れ替えたミラー問題も同一実行で評価（件数約2倍）
+  uv run python src/evaluation/eval_multi_prompts.py --model gpt-4o --language ja --swap_statements
 """
 
 import argparse
@@ -27,7 +30,7 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from eval_utils import (
+from eval_utils import (  # noqa: E402
     load_problems,
     create_messages,
     process_results,
@@ -47,26 +50,45 @@ _PROFILES = _load_profiles(_DEFAULT_PROFILES_PATH)
 _VLLM_DEFAULTS: dict = _PROFILES.get("vllm_defaults", {})
 _MODEL_PROFILES: dict = _PROFILES.get("models", {})
 
+DEFAULT_DATASETS = {
+    "ja": "cl-nagoya/jFrameBench",
+    "en": "cl-nagoya/FrameBench",
+}
+
 # Structured Outputs用のJSON schema（四択問題用）
+CHOICE_VLLM_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "answer": {
+            "type": "string",
+            "enum": ["1", "2", "3", "4"],
+            "description": "選択した回答（1, 2, 3, または4）",
+        }
+    },
+    "required": ["answer"],
+    "additionalProperties": False,
+}
+
 CHOICE_SCHEMA = {
     "type": "json_schema",
     "json_schema": {
         "name": "four_choice_answer",
         "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "answer": {
-                    "type": "string",
-                    "enum": ["1", "2", "3", "4"],
-                    "description": "選択した回答（1, 2, 3, または4）"
-                }
-            },
-            "required": ["answer"],
-            "additionalProperties": False
-        }
+        "schema": CHOICE_VLLM_JSON_SCHEMA,
     }
 }
+
+
+def make_choice_structured_outputs(use_json: bool = False):
+    """vLLM 用 structured output パラメータ（Closed Model 同等の JSON または choice 制約）"""
+    from vllm.sampling_params import StructuredOutputsParams
+
+    if use_json:
+        return StructuredOutputsParams(
+            json=CHOICE_VLLM_JSON_SCHEMA,
+            disable_additional_properties=True,
+        )
+    return StructuredOutputsParams(choice=["1", "2", "3", "4"])
 
 
 def get_model_profile(model_name: str) -> dict:
@@ -120,17 +142,46 @@ def get_thinking_stop(args) -> str:
     return _VLLM_DEFAULTS.get("thinking_stop", "</think>")
 
 
+THINKING_GENERATION_MODES = ("two_phase", "single_json")
+
+
+def get_thinking_generation_mode(profile: dict) -> str:
+    """thinking時の生成方式（省略時は思考フェーズと回答フェーズの2回生成）"""
+    mode = profile.get("thinking_generation_mode", "two_phase")
+    if mode not in THINKING_GENERATION_MODES:
+        raise ValueError(
+            f"thinking_generation_mode '{mode}' は未対応です。"
+            f" 指定可能な値: {', '.join(THINKING_GENERATION_MODES)}"
+        )
+    return mode
+
+
+def get_single_json_max_tokens(profile: dict, args) -> int:
+    """JSON 単発生成の max_tokens（YAMLモデル > vllm_defaults > 8192）"""
+    if "single_json_max_tokens" in profile:
+        base = profile["single_json_max_tokens"]
+    else:
+        base = _VLLM_DEFAULTS.get("single_json_max_tokens", 8192)
+    return max(base, args.answer_max_tokens, 32)
+
+
 def _merge_sampling(phase: str, args, profile: dict) -> tuple[float, float, int]:
     """サンプリングパラメータを YAMLデフォルト → YAMLモデルプロファイル → CLI引数 の順で解決する
 
-    phase が "thinking" または "answer" の場合は thinking_sampling セクションを参照する
-    （thinkingモードではthinking・回答フェーズで同一パラメータを使用）。
+    phase が "thinking" の場合は thinking_sampling セクションを参照する。
+    phase が "answer" の場合は answer_sampling セクションを参照する。
+    回答フェーズは選択肢制約をかけるため、top_k/top_p で候補数字を落とさない設定を使う。
     phase が "sampling" の場合は sampling セクション（通常モード）を参照する。
 
     Returns:
         (temperature, top_p, top_k)
     """
-    section_key = "thinking_sampling" if phase in ("thinking", "answer") else "sampling"
+    section_by_phase = {
+        "thinking": "thinking_sampling",
+        "answer": "answer_sampling",
+        "sampling": "sampling",
+    }
+    section_key = section_by_phase[phase]
     defaults = _VLLM_DEFAULTS.get(section_key, {})
     model_sampling = profile.get(section_key, {})
 
@@ -141,14 +192,21 @@ def _merge_sampling(phase: str, args, profile: dict) -> tuple[float, float, int]
     top_p = _val("top_p", 0.8)
     top_k = _val("top_k", 20)
 
-    # CLI引数があれば最優先（thinking/answer は共通の --thinking_* 引数）
-    if phase in ("thinking", "answer"):
+    # CLI引数があれば最優先
+    if phase == "thinking":
         if getattr(args, "thinking_temperature", None) is not None:
             temperature = args.thinking_temperature
         if getattr(args, "thinking_top_p", None) is not None:
             top_p = args.thinking_top_p
         if getattr(args, "thinking_top_k", None) is not None:
             top_k = args.thinking_top_k
+    elif phase == "answer":
+        if getattr(args, "answer_temperature", None) is not None:
+            temperature = args.answer_temperature
+        if getattr(args, "answer_top_p", None) is not None:
+            top_p = args.answer_top_p
+        if getattr(args, "answer_top_k", None) is not None:
+            top_k = args.answer_top_k
     else:
         if getattr(args, "temperature", None) is not None:
             temperature = args.temperature
@@ -160,11 +218,103 @@ def _merge_sampling(phase: str, args, profile: dict) -> tuple[float, float, int]
     return temperature, top_p, top_k
 
 
+def _format_messages_for_vllm(messages: list[dict], profile: dict) -> list[dict]:
+    """モデルごとの chat_template が期待する message 形式へ寄せる。"""
+    if profile.get("message_content_format") != "multimodal_list":
+        return messages
+
+    formatted = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            message = {**message, "content": [{"type": "text", "text": content}]}
+        formatted.append(message)
+    return formatted
+
+
+def _message_content_to_text(content) -> str:
+    """chat_template がない vLLM モデル向けに message content からテキストを取り出す。"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text", "")))
+        return "\n".join(part for part in parts if part)
+    return str(content)
+
+
+def _format_plain_prompt(messages: list[dict]) -> str:
+    """tokenizer.chat_template がないモデルでは、単一 user prompt をそのまま使う。"""
+    if len(messages) == 1 and messages[0].get("role") == "user":
+        return _message_content_to_text(messages[0].get("content", ""))
+
+    rendered = []
+    for message in messages:
+        role = message.get("role", "user")
+        content = _message_content_to_text(message.get("content", ""))
+        rendered.append(f"{role.upper()}: {content}")
+    return "\n".join(rendered)
+
+
+def append_generation_prefill(text: str, prefill: str | None) -> str:
+    """指定時だけ、生成開始位置の直前に任意の文字列を補う。"""
+    return text + prefill if prefill is not None else text
+
+
+def resolve_generation_prefill(
+    cli_prefill: str | None,
+    profile: dict,
+    effective_thinking: bool,
+) -> str | None:
+    """CLI指定を優先し、通常生成時だけモデル既定のprefillを補う。"""
+    if cli_prefill is not None:
+        return cli_prefill
+    if effective_thinking:
+        return None
+    return profile.get("no_thinking_generation_prefill")
+
+
+def _content_has_multimodal_part(content) -> bool:
+    if not isinstance(content, list):
+        return False
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") != "text":
+            return True
+    return False
+
+
+def _messages_have_multimodal_content(all_messages: list[list[dict]]) -> bool:
+    return any(
+        _content_has_multimodal_part(message.get("content"))
+        for messages in all_messages
+        for message in messages
+    )
+
+
+def validate_multimodal_support(args, all_messages: list[list[dict]]) -> None:
+    """入力メッセージとモデルプロファイルのマルチモーダル対応を照合する。"""
+    profile = get_model_profile(args.model)
+    has_multimodal_input = _messages_have_multimodal_content(all_messages)
+    supports_multimodal = profile.get("supports_multimodal") is True
+
+    if has_multimodal_input and not supports_multimodal:
+        raise ValueError(
+            f"モデル '{args.model}' は model_profiles.yaml で supports_multimodal: true "
+            "に設定されていないため、画像などのマルチモーダル入力は評価できません。"
+        )
+
+    if supports_multimodal and not has_multimodal_input and not getattr(args, "multimodal_check_reported", False):
+        print("ℹ️  このモデルはマルチモーダル対応として登録されていますが、今回の入力はテキストのみです。")
+        args.multimodal_check_reported = True
+
+
 def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
     """vLLMを使用して単一プロンプトで推論を実行"""
     from vllm import LLM, SamplingParams
-    from vllm.sampling_params import StructuredOutputsParams
-
     profile = get_model_profile(args.model)
     # supports_thinking: false が明示されている場合は優先
     if profile.get("supports_thinking") is False:
@@ -196,28 +346,55 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
     trust_remote_code = args.trust_remote_code or profile.get("trust_remote_code", False)
     if trust_remote_code:
         llm_kwargs["trust_remote_code"] = True
-    
+
     llm = LLM(**llm_kwargs)
 
     tokenizer = llm.get_tokenizer()
 
+    single_json_call = (
+        args.enable_thinking
+        and get_thinking_generation_mode(profile) == "single_json"
+    )
+    harmony_two_phase = args.enable_thinking and not single_json_call
+
     texts = []
+    profile_chat_template = profile.get("chat_template")
+    tokenizer_chat_template = getattr(tokenizer, "chat_template", None)
     for messages in all_messages:
-        chat_template_kwargs = {
-            "tokenize": False,
-            "add_generation_prompt": True,
-            "enable_thinking": args.enable_thinking,
-        }
-        if args.reasoning_effort:
-            chat_template_kwargs["reasoning_effort"] = args.reasoning_effort
-        
-        text = tokenizer.apply_chat_template(messages, **chat_template_kwargs)
-        texts.append(text)
+        messages = _format_messages_for_vllm(messages, profile)
+        if profile_chat_template or tokenizer_chat_template:
+            chat_template_kwargs = {
+                "tokenize": False,
+                "add_generation_prompt": True,
+                "enable_thinking": harmony_two_phase,
+            }
+            if profile_chat_template:
+                chat_template_kwargs["chat_template"] = profile_chat_template
+            if args.reasoning_effort:
+                chat_template_kwargs["reasoning_effort"] = args.reasoning_effort
+            text = tokenizer.apply_chat_template(messages, **chat_template_kwargs)
+        else:
+            text = _format_plain_prompt(messages)
+        texts.append(append_generation_prefill(text, args.generation_prefill))
 
     thinking_stop = get_thinking_stop(args)
     skip_special_tokens = profile.get("skip_special_tokens", True)
 
-    if args.enable_thinking:
+    if single_json_call:
+        s_temp, s_top_p, s_top_k = _merge_sampling("sampling", args, profile)
+        json_max_tokens = get_single_json_max_tokens(profile, args)
+        sampling_params = SamplingParams(
+            temperature=s_temp,
+            top_p=s_top_p,
+            top_k=s_top_k,
+            max_tokens=json_max_tokens,
+            structured_outputs=make_choice_structured_outputs(use_json=True),
+            skip_special_tokens=skip_special_tokens,
+        )
+        vllm_outputs = llm.generate(texts, sampling_params)
+        generated_texts = [output.outputs[0].text for output in vllm_outputs]
+        thinking_stop = None
+    elif harmony_two_phase:
         t_temp, t_top_p, t_top_k = _merge_sampling("thinking", args, profile)
         thinking_params = SamplingParams(
             temperature=t_temp,
@@ -236,13 +413,12 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
         ]
 
         a_temp, a_top_p, a_top_k = _merge_sampling("answer", args, profile)
-        structured_outputs = StructuredOutputsParams(choice=["1", "2", "3", "4"])
         answer_params = SamplingParams(
             temperature=a_temp,
             top_p=a_top_p,
             top_k=a_top_k,
             max_tokens=args.answer_max_tokens,
-            structured_outputs=structured_outputs,
+            structured_outputs=make_choice_structured_outputs(),
             skip_special_tokens=skip_special_tokens,
         )
         answer_outputs = llm.generate(answer_prompts, answer_params)
@@ -253,7 +429,7 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
         ]
     else:
         s_temp, s_top_p, s_top_k = _merge_sampling("sampling", args, profile)
-        structured_outputs = StructuredOutputsParams(choice=["1", "2", "3", "4"])
+        structured_outputs = make_choice_structured_outputs()
         sampling_params = SamplingParams(
             temperature=s_temp,
             top_p=s_top_p,
@@ -265,7 +441,12 @@ def run_vllm_single_prompt(args, all_problems, all_messages, output_dir):
         vllm_outputs = llm.generate(texts, sampling_params)
         generated_texts = [output.outputs[0].text for output in vllm_outputs]
 
-    all_problems, stats = process_results(all_problems, generated_texts, thinking_stop=thinking_stop)
+    all_problems, stats = process_results(
+        all_problems,
+        generated_texts,
+        thinking_stop=thinking_stop if harmony_two_phase else None,
+        use_quality_filter=not args.no_quality_filter,
+    )
     return all_problems, stats
 
 
@@ -320,7 +501,7 @@ def run_openai_single_prompt(args, all_problems, all_messages, output_dir):
     }
     
     # 非同期処理を実行
-    generated_texts, first_response = asyncio.run(
+    generated_texts, usage_metadata, first_response = asyncio.run(
         run_openai_async(
             all_messages,
             api_params,
@@ -335,13 +516,55 @@ def run_openai_single_prompt(args, all_problems, all_messages, output_dir):
         actual_params["first_response_model"] = first_response.model
         actual_params["system_fingerprint"] = getattr(first_response, "system_fingerprint", None)
     
-    all_problems, stats = process_results(all_problems, generated_texts)
+    all_problems, stats = process_results(
+        all_problems,
+        generated_texts,
+        use_quality_filter=not args.no_quality_filter,
+    )
+    for problem, usage in zip(all_problems, usage_metadata):
+        problem.update(usage)
     
     params_file = output_dir / "params.json"
     with open(params_file, "w", encoding="utf-8") as f:
         json.dump(actual_params, f, indent=2, ensure_ascii=False)
     
     return all_problems, stats
+
+
+def _to_plain_dict(value):
+    """OpenAI SDKのPydanticモデルや通常dictをプレーンなdictに変換する"""
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "model_dump"):
+        return value.model_dump(exclude_none=True)
+    if hasattr(value, "dict"):
+        return value.dict(exclude_none=True)
+    return {}
+
+
+def extract_usage_metadata(response):
+    """OpenAI互換APIレスポンスからTSV保存用のトークン使用量を抽出する"""
+    usage = _to_plain_dict(getattr(response, "usage", None))
+    completion_details = _to_plain_dict(usage.get("completion_tokens_details"))
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    total_tokens = usage.get("total_tokens")
+    reasoning_tokens = completion_details.get("reasoning_tokens")
+
+    if reasoning_tokens is None and all(
+        isinstance(value, int) for value in (prompt_tokens, completion_tokens, total_tokens)
+    ):
+        inferred_reasoning_tokens = total_tokens - prompt_tokens - completion_tokens
+        reasoning_tokens = inferred_reasoning_tokens if inferred_reasoning_tokens > 0 else 0
+
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "reasoning_tokens": reasoning_tokens,
+    }
 
 
 async def run_openai_async(all_messages, api_params, base_url=None, api_key=None, concurrency=10):
@@ -368,10 +591,11 @@ async def run_openai_async(all_messages, api_params, base_url=None, api_key=None
                 request_params = {**api_params, "messages": messages}
                 response = await client.chat.completions.create(**request_params)
             generated_text = response.choices[0].message.content
-            return i, generated_text, response if i == 0 else None
+            usage = extract_usage_metadata(response)
+            return i, generated_text, usage, response if i == 0 else None
         except Exception as e:
             print(f"APIエラー (index {i}): {e}")
-            return i, None, None
+            return i, None, {}, None
     
     provider = base_url or "OpenAI"
     print(f"API推論中（並列処理, provider={provider}, concurrency={concurrency}）: {len(all_messages)}件")
@@ -381,10 +605,11 @@ async def run_openai_async(all_messages, api_params, base_url=None, api_key=None
         
         # 結果を元の順序でソート
         results_sorted = sorted(results, key=lambda x: x[0])
-        generated_texts = [text for _, text, _ in results_sorted]
-        first_response = results_sorted[0][2] if results_sorted else None
+        generated_texts = [text for _, text, _, _ in results_sorted]
+        usage_metadata = [usage for _, _, usage, _ in results_sorted]
+        first_response = results_sorted[0][3] if results_sorted else None
         
-        return generated_texts, first_response
+        return generated_texts, usage_metadata, first_response
     finally:
         await client.close()
 
@@ -406,6 +631,7 @@ def run_single_prompt_experiment(args, prompt_file, prompt_name, all_problems_or
     
     # メッセージを生成
     all_messages = create_messages(all_problems, prompt_template)
+    validate_multimodal_support(args, all_messages)
     output_dir = base_output_dir / prompt_name
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -425,39 +651,43 @@ def run_single_prompt_experiment(args, prompt_file, prompt_name, all_problems_or
 
 
 def aggregate_results(all_stats, prompt_names, base_output_dir):
-    """複数のプロンプトの結果を集計"""
+    """複数のプロンプトの結果を集計（品質フィルタ後の正答率を使用）"""
     print(f"\n{'='*60}")
     print("全プロンプトの結果集計")
     print(f"{'='*60}\n")
     
-    # 各プロンプトの正答率を表示
     results_df = []
     for prompt_name, stats in zip(prompt_names, all_stats):
+        filtered_scores = stats.get('filtered_scores', stats['scores'])
+        filtered_total = stats.get('filtered_total', stats['total'])
+        filtered_accuracy = stats.get('filtered_accuracy', stats['accuracy'])
+        filtered_error_count = stats.get('filtered_error_count', stats['error_count'])
         results_df.append({
             'プロンプト': prompt_name,
-            '正答率': f"{stats['accuracy']*100:.1f}%",
-            '正解数': sum(stats['scores']),
-            '総問題数': stats['total'],
-            'エラー数': stats['error_count']
+            '正答率': f"{filtered_accuracy*100:.1f}%",
+            '正解数': sum(filtered_scores),
+            '総問題数': filtered_total,
+            'エラー数': filtered_error_count,
         })
     
     df = pd.DataFrame(results_df)
     print(df.to_string(index=False))
     
-    # 平均正答率を計算
-    avg_accuracy = sum(s['accuracy'] for s in all_stats) / len(all_stats)
+    accuracies = [s.get('filtered_accuracy', s['accuracy']) for s in all_stats]
+    avg_accuracy = sum(accuracies) / len(accuracies)
+    std_accuracy = pd.Series(accuracies).std(ddof=0)
     print(f"\n平均正答率: {avg_accuracy*100:.1f}%")
+    print(f"標準偏差: {std_accuracy*100:.1f}%")
     
-    # 集計結果を保存
     summary_file = base_output_dir / "aggregated_summary.txt"
     with open(summary_file, "w", encoding="utf-8") as f:
         f.write("複数プロンプトの実験結果集計\n")
         f.write("="*60 + "\n\n")
         f.write(df.to_string(index=False) + "\n\n")
         f.write(f"平均正答率: {avg_accuracy*100:.1f}%\n")
+        f.write(f"標準偏差: {std_accuracy*100:.1f}%\n")
     print(f"\n集計結果を {summary_file} に保存しました")
     
-    # TSVファイルも保存
     tsv_file = base_output_dir / "aggregated_summary.tsv"
     df.to_csv(tsv_file, sep="\t", index=False)
     print(f"集計結果を {tsv_file} に保存しました")
@@ -471,22 +701,28 @@ def main():
     # 共通引数
     parser.add_argument('--num', type=int, default=None, help='解く問題数（指定しない場合は全問）')
     parser.add_argument('--model', type=str, required=True, help='評価対象のLLMモデル')
-    parser.add_argument('--dataset', type=str, 
-                        required=True,
-                        help='データセットのパス（ローカルファイルのパスまたはHuggingFace Dataset名）')
+    parser.add_argument('--dataset', type=str, default=None,
+                        help='データセットのパス（ローカルファイルのパスまたはHuggingFace Dataset名）。未指定時はlanguageに応じた既定値を使用')
     parser.add_argument('--dataset_split', type=str, default='train',
                         help='HuggingFace Datasetのsplit（デフォルト: train）')
     parser.add_argument('--output_dir', type=str, default='output', help='出力ディレクトリのベースパス')
-    parser.add_argument('--language', type=str, default='ja', help='評価対象言語')
+    parser.add_argument('--output_num_label', type=str, default=None,
+                        help='出力ディレクトリの件数ラベル（例: 入力100行だけを使う場合に 100 を指定）')
+    parser.add_argument('--language', type=str, default='ja', choices=sorted(DEFAULT_DATASETS),
+                        help='評価対象言語（デフォルト: ja）')
+    parser.add_argument('--swap_statements', action='store_true',
+                        help='各問題の直後に文A/文Bを入れ替えた同一タスクのミラー問題を追加し、評価件数を約2倍にする（正解は1↔2で整合）')
     parser.add_argument('--reasoning_effort', type=str, default=None,
                         choices=['low', 'medium', 'high', 'minimal', 'none'],
                         help='推論の深さ')
     parser.add_argument('--api_concurrency', type=int, default=10,
                         help='OpenAI互換APIの同時リクエスト数（デフォルト: 10）')
+    parser.add_argument('--no_quality_filter', action='store_true',
+                        help='人手アノテーション品質フィルタを使わず、全問題で集計する')
     
     # プロンプト関連
     parser.add_argument('--prompt_files', type=str, nargs='+', default=None,
-                        help='使用するプロンプトファイルのパス（複数指定可）。指定しない場合はeval_promptフォルダ内の全ファイルを使用')
+                        help='使用するプロンプトファイルのパス（複数指定可）。指定しない場合はeval_prompt/<language>フォルダ内の全ファイルを使用')
     
     # vLLM固有の引数
     vllm_group = parser.add_argument_group('vLLM固有のオプション')
@@ -501,12 +737,18 @@ def main():
                            help='vLLMのmax_num_seqs（同時に処理する最大シーケンス数、デフォルト: 256）')
     vllm_group.add_argument('--max_tokens', type=int, default=8192,
                            help='通常モードでの最大出力トークン数（デフォルト: 8192）')
-    vllm_group.add_argument('--thinking_max_tokens', type=int, default=32768,
-                           help='思考モードでの思考部分の最大出力トークン数（デフォルト: 32768）')
+    vllm_group.add_argument('--thinking_max_tokens', type=int, default=8192,
+                           help='思考モードでの思考部分の最大出力トークン数（デフォルト: 8192）')
     vllm_group.add_argument('--answer_max_tokens', type=int, default=10,
                            help='思考モードでの回答部分の最大出力トークン数（デフォルト: 10）')
     vllm_group.add_argument('--trust_remote_code', action='store_true',
                            help='リモートコードの実行を許可（カスタムモデルコードを使用するモデルで必要）')
+    vllm_group.add_argument(
+        '--generation_prefill',
+        type=str,
+        default=None,
+        help='チャットテンプレート適用後の入力末尾に付加し、その直後から生成する文字列（vLLMのみ）',
+    )
 
     # サンプリングパラメータ上書き（vLLM）
     # 未指定時は model_profiles.yaml の値が使われる
@@ -523,6 +765,12 @@ def main():
                                 help='thinkingフェーズの top_p')
     sampling_group.add_argument('--thinking_top_k', type=int, default=None,
                                 help='thinkingフェーズの top_k')
+    sampling_group.add_argument('--answer_temperature', type=float, default=None,
+                                help='thinking有効時の回答フェーズの temperature')
+    sampling_group.add_argument('--answer_top_p', type=float, default=None,
+                                help='thinking有効時の回答フェーズの top_p')
+    sampling_group.add_argument('--answer_top_k', type=int, default=None,
+                                help='thinking有効時の回答フェーズの top_k')
     sampling_group.add_argument('--thinking_stop', type=str, default=None,
                                 help='thinkタグの終了文字列（デフォルト: model_profiles.yaml の thinking_stop）')
 
@@ -535,6 +783,9 @@ def main():
     if args.api_concurrency < 1:
         parser.error('--api_concurrency は1以上を指定してください')
 
+    if args.dataset is None:
+        args.dataset = DEFAULT_DATASETS[args.language]
+
     # カスタムプロファイルファイルが指定された場合は再読み込み
     if args.model_profile_file:
         global _PROFILES, _VLLM_DEFAULTS, _MODEL_PROFILES
@@ -544,11 +795,12 @@ def main():
     
     print(f"引数: {args}\n")
     
+    project_root = Path(__file__).parent.parent.parent
+
     # プロンプトファイルのリストを取得
     if args.prompt_files is None:
-        # eval_promptフォルダ内の全ファイルを使用
-        project_root = Path(__file__).parent.parent.parent
-        prompt_dir = project_root / "eval_prompt"
+        # eval_prompt/<language>フォルダ内の全ファイルを使用
+        prompt_dir = project_root / "eval_prompt" / args.language
         if not prompt_dir.exists():
             print(f"エラー: {prompt_dir} が見つかりません", file=sys.stderr)
             sys.exit(1)
@@ -558,7 +810,12 @@ def main():
             print(f"エラー: {prompt_dir} にプロンプトファイルが見つかりません", file=sys.stderr)
             sys.exit(1)
     else:
-        prompt_files = [Path(f) for f in args.prompt_files]
+        prompt_files = []
+        for f in args.prompt_files:
+            prompt_file = Path(f)
+            if not prompt_file.is_absolute():
+                prompt_file = project_root / prompt_file
+            prompt_files.append(prompt_file)
     
     print(f"使用するプロンプトファイル数: {len(prompt_files)}")
     for pf in prompt_files:
@@ -566,12 +823,20 @@ def main():
     print()
     
     # 問題を読み込む（全プロンプトで共通）
-    all_problems_original = load_problems(args.dataset, args.num, args.dataset_split)
+    all_problems_original = load_problems(
+        args.dataset,
+        args.num,
+        args.dataset_split,
+        args.language,
+        swap_statements=args.swap_statements,
+    )
 
     # 出力ディレクトリを作成
     suffix = ""
     backend = detect_backend(args.model)
     profile = get_model_profile(args.model)
+    effective_thinking = None
+    generation_prefill_source = None
 
     if backend == 'vllm':
         vllm_supports_reasoning = (
@@ -584,12 +849,25 @@ def main():
             print("ℹ️  reasoning_effort が未指定のため、デフォルト値 'medium' を使用します。")
 
         effective_thinking = args.enable_thinking or (args.reasoning_effort is not None)
+        cli_generation_prefill = args.generation_prefill
+        args.generation_prefill = resolve_generation_prefill(
+            cli_generation_prefill,
+            profile,
+            effective_thinking,
+        )
+        if cli_generation_prefill is not None:
+            generation_prefill_source = "cli"
+        elif args.generation_prefill is not None:
+            generation_prefill_source = "model_profile"
+            print("ℹ️  モデルプロファイルの no_thinking_generation_prefill を使用します。")
         if effective_thinking:
             suffix = "_thinking"
         else:
             suffix = "_no_thinking"
         if args.reasoning_effort:
             suffix += f"_reasoning_{args.reasoning_effort}"
+        if generation_prefill_source == "cli":
+            suffix += "_generation_prefill"
     else:  # openai
         # supports_thinking: false が明示されている場合は優先
         if profile.get("supports_thinking") is False:
@@ -602,8 +880,22 @@ def main():
             suffix = "_reasoning_medium"
     
     safe_model_name = args.model.replace('/', '_').replace(':', '_')
-    num_str = str(args.num) if args.num is not None else "all"
+    num_str = args.output_num_label or (str(args.num) if args.num is not None else "all")
     base_output_dir = Path(args.output_dir) / args.language / num_str / f"{safe_model_name}{suffix}"
+    base_output_dir.mkdir(parents=True, exist_ok=True)
+    with open(base_output_dir / "run_config.json", "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "model": args.model,
+                "backend": backend,
+                "effective_thinking": effective_thinking,
+                "generation_prefill": args.generation_prefill,
+                "generation_prefill_source": generation_prefill_source,
+            },
+            f,
+            indent=2,
+            ensure_ascii=False,
+        )
     
     # 各プロンプトで実験を実行
     all_stats = []

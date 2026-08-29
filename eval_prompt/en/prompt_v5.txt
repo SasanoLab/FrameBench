@@ -1,0 +1,14 @@
+Problem:
+{four_choice_question}
+
+[Sentence A]
+{statement_a}
+
+[Sentence B]
+{statement_b}
+
+Choices:
+{choices_text}
+
+Final answer format:
+just the option number (1-4).

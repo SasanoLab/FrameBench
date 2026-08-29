@@ -1,0 +1,10 @@
+それぞれの文の述語動詞に注意して回答してください。
+{four_choice_question}
+
+文A: {statement_a}
+
+文B: {statement_b}
+
+選択肢: {choices_text}
+
+選択肢の番号「1」、「2」、「3」、「4」のいずれかで答えてください.
