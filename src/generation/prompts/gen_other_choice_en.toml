@@ -1,0 +1,49 @@
+# プロンプトのバージョンや設定を記述
+version = "v0.4.0"
+engine = "jinja2" # 変数を埋め込むためのテンプレートエンジンを指定
+language = "en"
+
+[engine_options]
+undefined = "debug"
+
+[[messages]]
+role = "user"
+content = '''
+Please read the following [Input Data] and [Creation Instructions], and assist in creating a test dataset.
+
+[Input Data]
+
+Question: {{single_question}}
+
+Verb to use: {{ verb }}
+
+Frame Information: {{ definitions_a }}
+
+Existing Sentence: {{ sentence }}
+
+[Creation Instructions]
+
+Create a new sentence that evokes the same frame {{frame_a}} using the {{verb}}, similar to the {{sentence}}.
+
+However, ensure that the sentence is constructed such that {{Answer}} is the correct answer to the "Question" {{single_question}}. 
+Note: Basically, evoking the correct frame should strictly maintain consistency with the answer.
+
+Please observe the following rules when creating the example sentence:
+
+Rule (a): Do NOT include direct hints to the answer in the sentence.
+    Avoid using adverbs or additional words that explicitly state the answer. The answer should be implied by the verb's meaning, not by explanatory words.
+
+Rule (b): The two sentences should evoke the same frame, but they must differ in content words and sentence structure to allow for meaningful semantic comparison.
+    It is preferable that they share a similar general topic or subject matter.
+
+Rule (c) (Most Important): The sentence must be natural English. Please be careful not to create awkward English phrasing while trying to follow the other rules.
+
+Step 2: Logical Verification Verify once again: Does your generated sentence logically lead to the Target Answer "{{Answer}}" when asked the Question "{{single_question}}"
+* If the sentence is ambiguous or leads to the wrong answer, please reconsider and rewrite the sentence.
+
+Output must be in the following JSON format, and output nothing else. Ensure the JSON keys and values are enclosed in double quotes.
+
+{
+"generated_sentence": "Generated Sentence"
+}
+'''
