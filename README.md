@@ -5,7 +5,7 @@ This repository contains the code for building a frame-knowledge-based semantic 
 
 </p>
 <p align="center">
-  <a href="https://www.anlp.jp/proceedings/annual_meeting/2026/pdf_dir/Q4-13.pdf"><b>📄 Paper</b></a> | 
+  <a href="https://aclanthology.org/2026.findings-emnlp.2012/"><b>📄 Paper</b></a> | 
   <a href="https://huggingface.co/datasets/cl-nagoya/jFrameBench"><b>🤗 Japanese FrameBench</b></a> |
   <a href="https://huggingface.co/datasets/cl-nagoya/FrameBench"><b>🤗 English FrameBench</b></a>
 </p>
